@@ -77,6 +77,15 @@ final class CacheRepository
         return $modifiedAt === false ? null : $modifiedAt;
     }
 
+    public function delete(string $key): void
+    {
+        $path = $this->path($key);
+
+        if (is_file($path) && !unlink($path)) {
+            throw new RuntimeException(sprintf('Unable to delete cache file "%s".', $path));
+        }
+    }
+
     private function path(string $key): string
     {
         $safeKey = preg_replace('/[^a-zA-Z0-9._-]/', '_', $key);
