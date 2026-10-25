@@ -5,6 +5,7 @@ const battleGrid = document.getElementById('battle-grid');
 const winnerBanner = document.getElementById('winner-banner');
 const snapshotTime = document.getElementById('snapshot-time');
 const competitionNote = document.getElementById('competition-note');
+const syncDetails = document.getElementById('sync-details');
 const syncStatus = document.getElementById('sync-status');
 const statsGrid = document.getElementById('stats-grid');
 const recentGames = document.getElementById('recent-games');
@@ -75,7 +76,7 @@ function renderBattle(data) {
     }
 
     renderCompetitionNote(players, competition);
-    renderSyncStatus(data.sync ?? {});
+    renderSyncStatus(data.sync ?? {}, players);
     renderHero(players, competition, data.sync ?? {});
     renderStats(players, competition);
     renderRecent(players);
@@ -96,16 +97,53 @@ function renderCompetitionNote(players, competition) {
 
     const startDate = dayFormatter.format(new Date(competition.starts_at));
     const source = players.find((player) => player.key === competition.source_player);
-    const stalePlayers = players.filter((player) => Number(player.sync?.stale_cache_games ?? 0) > 0);
-    let message = source
+    competitionNote.textContent = source
         ? `Battle score counts achievements unlocked since ${startDate}, when ${source.name}'s Steam account was created.`
         : `Battle score counts achievements unlocked since ${startDate}.`;
+}
 
-    if (stalePlayers.length > 0) {
-        message += ` Steam temporarily failed for ${stalePlayers.map((player) => player.name).join(' & ')}; cached data was retained for a small number of games.`;
+function renderSyncStatus(sync, players) {
+    if (syncDetails === null || syncStatus === null) {
+        return;
     }
 
-    competitionNote.textContent = message;
+    const pendingGames = Number(sync.pending_games ?? 0);
+    const missingGames = Number(sync.missing_games ?? 0);
+    const unavailableGames = Number(sync.unavailable_games ?? 0);
+    const rateLimitedUntil = Number(sync.rate_limited_until ?? 0);
+    const rateLimited = rateLimitedUntil > Math.floor(Date.now() / 1000);
+    const stalePlayers = players.filter((player) => Number(player.sync?.stale_cache_games ?? 0) > 0);
+    const unavailableItems = Array.isArray(sync.unavailable_items) ? sync.unavailable_items : [];
+
+    if (pendingGames === 0 && unavailableGames === 0 && !rateLimited && stalePlayers.length === 0) {
+        syncDetails.hidden = true;
+        syncStatus.textContent = '';
+        return;
+    }
+
+    const messages = [];
+
+    if (sync.initial_complete === false) {
+        messages.push(`${numberFormatter.format(missingGames)} games still need initial achievement data.`);
+    } else if (pendingGames > 0) {
+        messages.push(`${numberFormatter.format(pendingGames)} changed games are still being refreshed.`);
+    }
+
+    if (rateLimited) {
+        messages.push(`Steam requests are paused until ${dateFormatter.format(new Date(rateLimitedUntil * 1000))}.`);
+    }
+
+    if (unavailableGames > 0) {
+        const names = unavailableItems.slice(0, 5).map((item) => item.name).filter(Boolean);
+        messages.push(`${numberFormatter.format(unavailableGames)} games are temporarily marked unavailable and will be retried later${names.length > 0 ? `: ${names.join(', ')}` : ''}.`);
+    }
+
+    if (stalePlayers.length > 0) {
+        messages.push(`Cached achievement data was retained for ${stalePlayers.map((player) => player.name).join(' & ')} where Steam temporarily failed.`);
+    }
+
+    syncStatus.textContent = messages.join(' ');
+    syncDetails.hidden = false;
 }
 
 function renderHero(players, competition, sync) {
@@ -175,9 +213,7 @@ function renderHero(players, competition, sync) {
             }
 
             if (sync.initial_complete === false) {
-                const pendingGames = Number(sync.pending_games ?? 0);
-                winnerBanner.textContent = `Initial Steam sync in progress — ${numberFormatter.format(pendingGames)} game${pendingGames === 1 ? '' : 's'} remaining. Scores are provisional.`;
-                winnerBanner.hidden = false;
+                winnerBanner.hidden = true;
                 return;
             }
 
@@ -186,36 +222,6 @@ function renderHero(players, competition, sync) {
 
         requestAnimationFrame(tick);
     }, delay);
-}
-
-function renderSyncStatus(sync) {
-    if (syncStatus === null) {
-        return;
-    }
-
-    const pendingGames = Number(sync.pending_games ?? 0);
-    const missingGames = Number(sync.missing_games ?? 0);
-    const rateLimitedUntil = Number(sync.rate_limited_until ?? 0);
-    const rateLimited = rateLimitedUntil > Math.floor(Date.now() / 1000);
-
-    if (sync.complete !== false && !rateLimited) {
-        syncStatus.hidden = true;
-        syncStatus.textContent = '';
-        return;
-    }
-
-    let message = sync.initial_complete === false
-        ? `Initial Steam sync: ${numberFormatter.format(missingGames)} games still need achievement data.`
-        : `${numberFormatter.format(pendingGames)} recently changed games are still being refreshed; cached values remain visible.`;
-
-    if (rateLimited) {
-        message += ` Steam rate limit reached; automatic requests are paused until ${dateFormatter.format(new Date(rateLimitedUntil * 1000))}.`;
-    } else if (pendingGames > 0) {
-        message += ' The next refresh continues from the remaining games instead of starting over.';
-    }
-
-    syncStatus.textContent = message;
-    syncStatus.hidden = false;
 }
 
 function revealWinner(players) {
@@ -399,8 +405,8 @@ function renderExcluded(games) {
     }
 
     excludedGames.innerHTML = `<strong>Excluded from every battle statistic:</strong> ${games
-        .map((game) => `${escapeHtml(game.name)}`)
-        .join(', ')}. `;
+        .map((game) => `${escapeHtml(game.name)} (AppID ${game.app_id})`)
+        .join(', ')}. Edit <code>config/config.php</code> to change this list, then refresh the snapshot.`;
 }
 
 function installImageFallbacks(container) {

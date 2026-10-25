@@ -43,6 +43,7 @@ final class IncrementalBattleService
         $contexts = $this->contexts();
         $queue = $this->queue($contexts);
         $processed = 0;
+        $temporarilyUnavailable = 0;
         $rateLimited = false;
 
         foreach (array_slice($queue, 0, $this->maxGamesPerRun()) as $item) {
@@ -62,11 +63,11 @@ final class IncrementalBattleService
             }
 
             if ($result['data'] !== null) {
-                $this->cache->write(
-                    $this->achievementCacheKey($item['player_key'], $item['app_id']),
-                    ['game_fingerprint' => $item['fingerprint'], 'data' => $result['data']],
-                );
+                $this->writeAchievementCache($item, $result['data']);
+                $this->cache->delete($this->failureCacheKey($item['player_key'], $item['app_id']));
                 $processed++;
+            } elseif ($this->recordFailure($item, $result)) {
+                $temporarilyUnavailable++;
             }
 
             $delay = $this->config->steamBatchDelayMilliseconds();
@@ -82,7 +83,10 @@ final class IncrementalBattleService
             'initial_complete' => $status['missing'] === 0,
             'pending_games' => $status['pending'],
             'missing_games' => $status['missing'],
+            'unavailable_games' => count($status['unavailable']),
+            'unavailable_items' => $status['unavailable'],
             'processed_this_run' => $processed,
+            'temporarily_unavailable_this_run' => $temporarilyUnavailable,
             'rate_limited' => $rateLimited,
             'rate_limited_until' => $cooldownUntil,
         ];
@@ -96,6 +100,7 @@ final class IncrementalBattleService
         }
 
         if ($snapshot !== null && $this->wasInitiallyComplete($snapshot)) {
+            $snapshot = $this->refreshSnapshotMetadata($snapshot, $contexts);
             $snapshot['sync'] = $sync;
             $this->cache->write(self::SNAPSHOT_KEY, $snapshot);
 
@@ -110,10 +115,17 @@ final class IncrementalBattleService
 
     /**
      * @return array<string, array{
-     *     config: array<string, string>,
+     *     config: array{
+     *         key: string,
+     *         display_name: string,
+     *         profile: string,
+     *         profile_type: string,
+     *         fighter_image: string
+     *     },
      *     steam_id: string,
      *     summary: array<string, mixed>,
-     *     games: array<int, array<string, mixed>>
+     *     games: array<int, array<string, mixed>>,
+     *     recent: list<array<string, mixed>>
      * }>
      */
     private function contexts(): array
@@ -140,6 +152,10 @@ final class IncrementalBattleService
                 'steam_id' => $steamId,
                 'summary' => $this->steam->playerSummary($steamId),
                 'games' => $games,
+                'recent' => $this->steam->recentlyPlayedGames(
+                    $steamId,
+                    max(10, $this->config->recentGameCount()),
+                ),
             ];
         }
 
@@ -147,8 +163,27 @@ final class IncrementalBattleService
     }
 
     /**
-     * @param array<string, array{config: array<string, string>, steam_id: string, summary: array<string, mixed>, games: array<int, array<string, mixed>>}> $contexts
-     * @return list<array{player_key: string, steam_id: string, app_id: int, fingerprint: string, last_played: int}>
+     * @param array<string, array{
+     *     config: array{
+     *         key: string,
+     *         display_name: string,
+     *         profile: string,
+     *         profile_type: string,
+     *         fighter_image: string
+     *     },
+     *     steam_id: string,
+     *     summary: array<string, mixed>,
+     *     games: array<int, array<string, mixed>>,
+     *     recent: list<array<string, mixed>>
+     * }> $contexts
+     * @return list<array{
+     *     player_key: string,
+     *     steam_id: string,
+     *     app_id: int,
+     *     fingerprint: string,
+     *     last_played: int,
+     *     name: string
+     * }>
      */
     private function queue(array $contexts): array
     {
@@ -173,24 +208,43 @@ final class IncrementalBattleService
                     'app_id' => $appId,
                     'fingerprint' => $fingerprint,
                     'last_played' => $this->int($game['rtime_last_played'] ?? null) ?? 0,
+                    'name' => is_string($game['name'] ?? null) ? $game['name'] : sprintf('App %d', $appId),
                 ];
             }
         }
 
-        usort($queue, static fn (array $a, array $b): int => $b['last_played'] <=> $a['last_played']);
+        usort($queue, static fn (array $left, array $right): int => $right['last_played'] <=> $left['last_played']);
 
         return $queue;
     }
 
     /**
-     * @param array<string, array{config: array<string, string>, steam_id: string, summary: array<string, mixed>, games: array<int, array<string, mixed>>}> $contexts
-     * @return array{pending: int, missing: int, players: array<string, array{pending: int, missing: int}>}
+     * @param array<string, array{
+     *     config: array{
+     *         key: string,
+     *         display_name: string,
+     *         profile: string,
+     *         profile_type: string,
+     *         fighter_image: string
+     *     },
+     *     steam_id: string,
+     *     summary: array<string, mixed>,
+     *     games: array<int, array<string, mixed>>,
+     *     recent: list<array<string, mixed>>
+     * }> $contexts
+     * @return array{
+     *     pending: int,
+     *     missing: int,
+     *     players: array<string, array{pending: int, missing: int}>,
+     *     unavailable: list<array{player_key: string, app_id: int, name: string, retry_after: int, reason: string}>
+     * }
      */
     private function status(array $contexts): array
     {
         $pending = 0;
         $missing = 0;
         $players = [];
+        $unavailable = [];
 
         foreach ($contexts as $playerKey => $context) {
             $playerPending = 0;
@@ -205,6 +259,18 @@ final class IncrementalBattleService
                 $cached = $this->cache->read($this->achievementCacheKey($playerKey, $appId));
 
                 if ($this->cacheMatches($cached, $fingerprint)) {
+                    if (is_array($cached) && ($cached['unavailable'] ?? false) === true) {
+                        $unavailable[] = [
+                            'player_key' => $playerKey,
+                            'app_id' => $appId,
+                            'name' => is_string($game['name'] ?? null) ? $game['name'] : sprintf('App %d', $appId),
+                            'retry_after' => $this->int($cached['retry_after'] ?? null) ?? 0,
+                            'reason' => is_string($cached['last_error'] ?? null)
+                                ? $cached['last_error']
+                                : 'Steam returned no usable achievement data.',
+                        ];
+                    }
+
                     continue;
                 }
 
@@ -220,10 +286,23 @@ final class IncrementalBattleService
             $missing += $playerMissing;
         }
 
-        return ['pending' => $pending, 'missing' => $missing, 'players' => $players];
+        return [
+            'pending' => $pending,
+            'missing' => $missing,
+            'players' => $players,
+            'unavailable' => $unavailable,
+        ];
     }
 
-    /** @return array{data: array<string, mixed>|null, rate_limited: bool, private: bool} */
+    /**
+     * @return array{
+     *     data: array{total: int, unlocked: int, achievements: list<array<string, mixed>>}|null,
+     *     rate_limited: bool,
+     *     private: bool,
+     *     status: int,
+     *     reason: string
+     * }
+     */
     private function fetchAchievements(string $steamId, int $appId): array
     {
         $url = 'https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?' . http_build_query([
@@ -233,31 +312,63 @@ final class IncrementalBattleService
             'l' => $this->config->steamLanguage(),
             'format' => 'json',
         ], '', '&', PHP_QUERY_RFC3986);
+        $lastStatus = 0;
+        $lastReason = 'Steam returned no usable achievement data.';
 
         for ($attempt = 1; $attempt <= $this->config->steamRetryCount(); $attempt++) {
-            [$status, $response] = $this->request($url);
+            [$status, $response, $curlError] = $this->request($url);
+            $lastStatus = $status;
             $error = $this->playerStatsError($response);
+            $lastReason = $error !== ''
+                ? $error
+                : ($curlError !== ''
+                    ? $curlError
+                    : sprintf('HTTP %d without usable achievement data.', $status));
 
             if ($status === 401) {
                 throw new RuntimeException('Steam rejected STEAM_API_KEY while loading achievements.');
             }
 
-            if ($status === 429 || ($status === 403 && $error === '')) {
-                return ['data' => null, 'rate_limited' => true, 'private' => false];
+            if ($status === 429 || ($status === 403 && $this->looksRateLimited($error))) {
+                return [
+                    'data' => null,
+                    'rate_limited' => true,
+                    'private' => false,
+                    'status' => $status,
+                    'reason' => $lastReason,
+                ];
             }
 
             if ($status === 403 && str_contains($error, 'profile is not public')) {
-                return ['data' => null, 'rate_limited' => false, 'private' => true];
+                return [
+                    'data' => null,
+                    'rate_limited' => false,
+                    'private' => true,
+                    'status' => $status,
+                    'reason' => $lastReason,
+                ];
             }
 
             $normalized = $this->normalizeAchievements($response);
 
             if ($normalized !== null) {
-                return ['data' => $normalized, 'rate_limited' => false, 'private' => false];
+                return [
+                    'data' => $normalized,
+                    'rate_limited' => false,
+                    'private' => false,
+                    'status' => $status,
+                    'reason' => '',
+                ];
             }
 
             if (in_array($status, [400, 404], true)) {
-                return ['data' => $this->emptyAchievements(), 'rate_limited' => false, 'private' => false];
+                return [
+                    'data' => $this->emptyAchievements(),
+                    'rate_limited' => false,
+                    'private' => false,
+                    'status' => $status,
+                    'reason' => $lastReason,
+                ];
             }
 
             if (($status > 0 && $status < 500) || $attempt === $this->config->steamRetryCount()) {
@@ -267,10 +378,16 @@ final class IncrementalBattleService
             usleep(min(8000, 500 * (2 ** ($attempt - 1))) * 1000);
         }
 
-        return ['data' => null, 'rate_limited' => false, 'private' => false];
+        return [
+            'data' => null,
+            'rate_limited' => false,
+            'private' => false,
+            'status' => $lastStatus,
+            'reason' => $lastReason,
+        ];
     }
 
-    /** @return array{0: int, 1: array<string, mixed>|null} */
+    /** @return array{0: int, 1: array<string, mixed>|null, 2: string} */
     private function request(string $url): array
     {
         $handle = curl_init($url);
@@ -284,15 +401,16 @@ final class IncrementalBattleService
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_TIMEOUT => 25,
-            CURLOPT_USERAGENT => 'AchievementBattle/1.3',
+            CURLOPT_USERAGENT => 'AchievementBattle/1.4',
             CURLOPT_HTTPHEADER => ['Accept: application/json'],
         ]);
         $raw = curl_exec($handle);
         $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+        $curlError = curl_error($handle);
         curl_close($handle);
         $decoded = is_string($raw) ? json_decode($raw, true) : null;
 
-        return [$status, is_array($decoded) ? $decoded : null];
+        return [$status, is_array($decoded) ? $decoded : null, $curlError];
     }
 
     /** @param array<string, mixed>|null $response */
@@ -326,25 +444,123 @@ final class IncrementalBattleService
             $apiName = is_string($item['apiname'] ?? null) ? $item['apiname'] : '';
             $achievements[] = [
                 'api_name' => $apiName,
-                'name' => is_string($item['name'] ?? null) ? $item['name'] : ($apiName !== '' ? $apiName : 'Unknown achievement'),
+                'name' => is_string($item['name'] ?? null)
+                    ? $item['name']
+                    : ($apiName !== '' ? $apiName : 'Unknown achievement'),
                 'description' => is_string($item['description'] ?? null) ? $item['description'] : '',
                 'achieved' => $achieved,
                 'unlock_time' => $this->int($item['unlocktime'] ?? null) ?? 0,
             ];
         }
 
-        return ['total' => count($achievements), 'unlocked' => $unlocked, 'achievements' => $achievements];
+        return [
+            'total' => count($achievements),
+            'unlocked' => $unlocked,
+            'achievements' => $achievements,
+        ];
     }
 
-    /** @return array{total: int, unlocked: int, achievements: array<int, never>} */
+    /**
+     * @param array{
+     *     player_key: string,
+     *     steam_id: string,
+     *     app_id: int,
+     *     fingerprint: string,
+     *     last_played: int,
+     *     name: string
+     * } $item
+     * @param array{total: int, unlocked: int, achievements: list<array<string, mixed>>} $data
+     */
+    private function writeAchievementCache(array $item, array $data): void
+    {
+        $this->cache->write(
+            $this->achievementCacheKey($item['player_key'], $item['app_id']),
+            [
+                'game_fingerprint' => $item['fingerprint'],
+                'data' => $data,
+            ],
+        );
+    }
+
+    /**
+     * @param array{
+     *     player_key: string,
+     *     steam_id: string,
+     *     app_id: int,
+     *     fingerprint: string,
+     *     last_played: int,
+     *     name: string
+     * } $item
+     * @param array{
+     *     data: array<string, mixed>|null,
+     *     rate_limited: bool,
+     *     private: bool,
+     *     status: int,
+     *     reason: string
+     * } $result
+     */
+    private function recordFailure(array $item, array $result): bool
+    {
+        $key = $this->failureCacheKey($item['player_key'], $item['app_id']);
+        $cached = $this->cache->read($key);
+        $attempts = is_array($cached) && ($cached['fingerprint'] ?? null) === $item['fingerprint']
+            ? ($this->int($cached['attempts'] ?? null) ?? 0) + 1
+            : 1;
+
+        $this->cache->write($key, [
+            'fingerprint' => $item['fingerprint'],
+            'attempts' => $attempts,
+            'last_status' => $result['status'],
+            'last_error' => $result['reason'],
+            'last_attempt_at' => time(),
+        ]);
+
+        if ($attempts < $this->failuresBeforeTemporarySkip()) {
+            return false;
+        }
+
+        $this->cache->write(
+            $this->achievementCacheKey($item['player_key'], $item['app_id']),
+            [
+                'game_fingerprint' => $item['fingerprint'],
+                'data' => $this->emptyAchievements(),
+                'unavailable' => true,
+                'retry_after' => time() + $this->unavailableRetrySeconds(),
+                'last_status' => $result['status'],
+                'last_error' => $result['reason'],
+            ],
+        );
+        $this->cache->delete($key);
+
+        return true;
+    }
+
+    /** @return array{total: int, unlocked: int, achievements: list<array<string, mixed>>} */
     private function emptyAchievements(): array
     {
         return ['total' => 0, 'unlocked' => 0, 'achievements' => []];
     }
 
     /**
-     * @param array<string, array{config: array<string, string>, steam_id: string, summary: array<string, mixed>, games: array<int, array<string, mixed>>}> $contexts
-     * @param array{pending: int, missing: int, players: array<string, array{pending: int, missing: int}>} $status
+     * @param array<string, array{
+     *     config: array{
+     *         key: string,
+     *         display_name: string,
+     *         profile: string,
+     *         profile_type: string,
+     *         fighter_image: string
+     *     },
+     *     steam_id: string,
+     *     summary: array<string, mixed>,
+     *     games: array<int, array<string, mixed>>,
+     *     recent: list<array<string, mixed>>
+     * }> $contexts
+     * @param array{
+     *     pending: int,
+     *     missing: int,
+     *     players: array<string, array{pending: int, missing: int}>,
+     *     unavailable: list<array{player_key: string, app_id: int, name: string, retry_after: int, reason: string}>
+     * } $status
      * @param array<string, mixed> $sync
      * @return array<string, mixed>
      */
@@ -372,7 +588,19 @@ final class IncrementalBattleService
     }
 
     /**
-     * @param array{config: array<string, string>, steam_id: string, summary: array<string, mixed>, games: array<int, array<string, mixed>>} $context
+     * @param array{
+     *     config: array{
+     *         key: string,
+     *         display_name: string,
+     *         profile: string,
+     *         profile_type: string,
+     *         fighter_image: string
+     *     },
+     *     steam_id: string,
+     *     summary: array<string, mixed>,
+     *     games: array<int, array<string, mixed>>,
+     *     recent: list<array<string, mixed>>
+     * } $context
      * @param array<string, mixed> $competition
      * @param array{pending: int, missing: int} $status
      * @return array<string, mixed>
@@ -428,11 +656,15 @@ final class IncrementalBattleService
         return [
             'key' => $key,
             'name' => $context['config']['display_name'],
-            'steam_name' => is_string($context['summary']['personaname'] ?? null) ? $context['summary']['personaname'] : $context['config']['display_name'],
+            'steam_name' => is_string($context['summary']['personaname'] ?? null)
+                ? $context['summary']['personaname']
+                : $context['config']['display_name'],
             'steam_id' => $context['steam_id'],
             'avatar' => is_string($context['summary']['avatarfull'] ?? null) ? $context['summary']['avatarfull'] : '',
             'fighter_image' => $context['config']['fighter_image'],
-            'profile_url' => is_string($context['summary']['profileurl'] ?? null) ? $context['summary']['profileurl'] : '',
+            'profile_url' => is_string($context['summary']['profileurl'] ?? null)
+                ? $context['summary']['profileurl']
+                : '',
             'achievement_count' => $battle,
             'lifetime_achievement_count' => $lifetime,
             'completed_games' => $battlePerfect,
@@ -440,43 +672,148 @@ final class IncrementalBattleService
             'games_with_achievements' => $gamesWithAchievements,
             'games_included' => count($context['games']),
             'hours_played' => round($minutes / 60, 1),
-            'recent_games' => $this->recentGames($context['games']),
+            'recent_games' => $this->recentGames($context['games'], $context['recent']),
             'rare_achievements' => [],
             'sync' => ['pending_games' => $status['pending'], 'missing_games' => $status['missing']],
         ];
     }
 
-    /** @param array<int, array<string, mixed>> $games */
-    private function recentGames(array $games): array
+    /**
+     * @param array<string, mixed> $snapshot
+     * @param array<string, array{
+     *     config: array{
+     *         key: string,
+     *         display_name: string,
+     *         profile: string,
+     *         profile_type: string,
+     *         fighter_image: string
+     *     },
+     *     steam_id: string,
+     *     summary: array<string, mixed>,
+     *     games: array<int, array<string, mixed>>,
+     *     recent: list<array<string, mixed>>
+     * }> $contexts
+     * @return array<string, mixed>
+     */
+    private function refreshSnapshotMetadata(array $snapshot, array $contexts): array
     {
-        uasort($games, fn (array $a, array $b): int => ($this->int($b['rtime_last_played'] ?? null) ?? 0) <=> ($this->int($a['rtime_last_played'] ?? null) ?? 0));
-        $result = [];
+        $players = $snapshot['players'] ?? null;
 
-        foreach ($games as $appId => $game) {
-            if (($this->int($game['playtime_forever'] ?? null) ?? 0) <= 0) {
+        if (!is_array($players)) {
+            return $snapshot;
+        }
+
+        foreach ($players as $index => $player) {
+            if (!is_array($player)) {
                 continue;
             }
 
-            $icon = is_string($game['img_icon_url'] ?? null) ? $game['img_icon_url'] : '';
-            $result[] = [
-                'app_id' => $appId,
-                'name' => is_string($game['name'] ?? null) ? $game['name'] : sprintf('App %d', $appId),
-                'hours' => round(($this->int($game['playtime_forever'] ?? null) ?? 0) / 60, 1),
-                'last_played' => $this->int($game['rtime_last_played'] ?? null) ?? 0,
-                'image' => sprintf('https://cdn.akamai.steamstatic.com/steam/apps/%d/header.jpg', $appId),
-                'icon' => $icon === '' ? '' : sprintf('https://media.steampowered.com/steamcommunity/public/images/apps/%d/%s.jpg', $appId, rawurlencode($icon)),
-            ];
+            $key = is_string($player['key'] ?? null) ? $player['key'] : null;
+
+            if ($key === null || !isset($contexts[$key])) {
+                continue;
+            }
+
+            $context = $contexts[$key];
+            $player['steam_name'] = is_string($context['summary']['personaname'] ?? null)
+                ? $context['summary']['personaname']
+                : $context['config']['display_name'];
+            $player['avatar'] = is_string($context['summary']['avatarfull'] ?? null)
+                ? $context['summary']['avatarfull']
+                : '';
+            $player['profile_url'] = is_string($context['summary']['profileurl'] ?? null)
+                ? $context['summary']['profileurl']
+                : '';
+            $player['recent_games'] = $this->recentGames($context['games'], $context['recent']);
+            $players[$index] = $player;
+        }
+
+        $snapshot['players'] = $players;
+
+        return $snapshot;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $games
+     * @param list<array<string, mixed>> $recentRaw
+     * @return list<array<string, mixed>>
+     */
+    private function recentGames(array $games, array $recentRaw): array
+    {
+        $result = [];
+
+        foreach ($recentRaw as $rawGame) {
+            $appId = $this->int($rawGame['appid'] ?? null);
+
+            if ($appId === null || !isset($games[$appId])) {
+                continue;
+            }
+
+            $result[$appId] = $this->publicGame($appId, $games[$appId]);
+
+            if (count($result) >= $this->config->recentGameCount()) {
+                return array_values($result);
+            }
+        }
+
+        $fallback = $games;
+        uasort(
+            $fallback,
+            fn (array $left, array $right): int =>
+                ($this->int($right['rtime_last_played'] ?? null) ?? 0)
+                <=> ($this->int($left['rtime_last_played'] ?? null) ?? 0),
+        );
+
+        foreach ($fallback as $appId => $game) {
+            if (isset($result[$appId]) || ($this->int($game['playtime_forever'] ?? null) ?? 0) <= 0) {
+                continue;
+            }
+
+            $result[$appId] = $this->publicGame($appId, $game);
 
             if (count($result) >= $this->config->recentGameCount()) {
                 break;
             }
         }
 
-        return $result;
+        return array_values($result);
+    }
+
+    /** @param array<string, mixed> $game @return array<string, mixed> */
+    private function publicGame(int $appId, array $game): array
+    {
+        $icon = is_string($game['img_icon_url'] ?? null) ? $game['img_icon_url'] : '';
+
+        return [
+            'app_id' => $appId,
+            'name' => is_string($game['name'] ?? null) ? $game['name'] : sprintf('App %d', $appId),
+            'hours' => round(($this->int($game['playtime_forever'] ?? null) ?? 0) / 60, 1),
+            'last_played' => $this->int($game['rtime_last_played'] ?? null) ?? 0,
+            'image' => sprintf('https://cdn.akamai.steamstatic.com/steam/apps/%d/header.jpg', $appId),
+            'icon' => $icon === ''
+                ? ''
+                : sprintf(
+                    'https://media.steampowered.com/steamcommunity/public/images/apps/%d/%s.jpg',
+                    $appId,
+                    rawurlencode($icon),
+                ),
+        ];
     }
 
     /**
-     * @param array<string, array{config: array<string, string>, steam_id: string, summary: array<string, mixed>, games: array<int, array<string, mixed>>}> $contexts
+     * @param array<string, array{
+     *     config: array{
+     *         key: string,
+     *         display_name: string,
+     *         profile: string,
+     *         profile_type: string,
+     *         fighter_image: string
+     *     },
+     *     steam_id: string,
+     *     summary: array<string, mixed>,
+     *     games: array<int, array<string, mixed>>,
+     *     recent: list<array<string, mixed>>
+     * }> $contexts
      * @return array{mode: string, timestamp: int|null, starts_at: string|null, source_player: string|null}
      */
     private function competition(array $contexts): array
@@ -489,13 +826,20 @@ final class IncrementalBattleService
 
         if ($mode === 'date') {
             $date = $this->config->achievementStartDate();
-            $value = $date !== null ? DateTimeImmutable::createFromFormat('!Y-m-d', $date, new DateTimeZone('UTC')) : false;
+            $value = $date !== null
+                ? DateTimeImmutable::createFromFormat('!Y-m-d', $date, new DateTimeZone('UTC'))
+                : false;
 
             if ($value === false) {
                 throw new RuntimeException('Unable to parse achievement_start.date.');
             }
 
-            return ['mode' => $mode, 'timestamp' => $value->getTimestamp(), 'starts_at' => $value->format(DATE_ATOM), 'source_player' => null];
+            return [
+                'mode' => $mode,
+                'timestamp' => $value->getTimestamp(),
+                'starts_at' => $value->format(DATE_ATOM),
+                'source_player' => null,
+            ];
         }
 
         $playerKey = $this->config->achievementStartPlayerKey();
@@ -507,7 +851,12 @@ final class IncrementalBattleService
             throw new RuntimeException('Unable to determine the configured player account creation date.');
         }
 
-        return ['mode' => $mode, 'timestamp' => $timestamp, 'starts_at' => gmdate(DATE_ATOM, $timestamp), 'source_player' => $playerKey];
+        return [
+            'mode' => $mode,
+            'timestamp' => $timestamp,
+            'starts_at' => gmdate(DATE_ATOM, $timestamp),
+            'source_player' => $playerKey,
+        ];
     }
 
     /** @param array<string, mixed>|null $response */
@@ -515,26 +864,61 @@ final class IncrementalBattleService
     {
         $stats = is_array($response['playerstats'] ?? null) ? $response['playerstats'] : null;
 
-        return is_array($stats) && is_string($stats['error'] ?? null) ? strtolower($stats['error']) : '';
+        return is_array($stats) && is_string($stats['error'] ?? null)
+            ? strtolower($stats['error'])
+            : '';
+    }
+
+    private function looksRateLimited(string $error): bool
+    {
+        if ($error === '') {
+            return true;
+        }
+
+        return str_contains($error, 'rate')
+            || str_contains($error, 'too many')
+            || str_contains($error, 'limit')
+            || str_contains($error, 'temporar');
     }
 
     /** @param array<string, mixed>|null $cached */
     private function cacheMatches(?array $cached, string $fingerprint): bool
     {
-        return is_array($cached)
-            && is_array($cached['data'] ?? null)
-            && ($cached['game_fingerprint'] ?? null) === $fingerprint;
+        if (
+            !is_array($cached)
+            || !is_array($cached['data'] ?? null)
+            || ($cached['game_fingerprint'] ?? null) !== $fingerprint
+        ) {
+            return false;
+        }
+
+        if (($cached['unavailable'] ?? false) !== true) {
+            return true;
+        }
+
+        $retryAfter = $this->int($cached['retry_after'] ?? null) ?? 0;
+
+        return $retryAfter > time();
     }
 
     /** @param array<string, mixed> $game */
     private function fingerprint(array $game): string
     {
-        return sprintf('%d:%d', $this->int($game['playtime_forever'] ?? null) ?? 0, $this->int($game['rtime_last_played'] ?? null) ?? 0);
+        return sprintf(
+            '%d:%d',
+            $this->int($game['playtime_forever'] ?? null) ?? 0,
+            $this->int($game['rtime_last_played'] ?? null) ?? 0,
+        );
     }
 
     private function achievementCacheKey(string $playerKey, int $appId): string
     {
         return sprintf('achievements-%s-%d', $playerKey, $appId);
+    }
+
+    private function failureCacheKey(string $playerKey, int $appId): string
+    {
+        return sprintf('achievement-failure-%s-%d', $playerKey, $appId);
     }
 
     private function maxGamesPerRun(): int
@@ -545,6 +929,16 @@ final class IncrementalBattleService
     private function cooldownSeconds(): int
     {
         return max(60, min(86400, $this->envInt('STEAM_RATE_LIMIT_COOLDOWN_SECONDS', 1800)));
+    }
+
+    private function failuresBeforeTemporarySkip(): int
+    {
+        return max(1, min(10, $this->envInt('STEAM_FAILURES_BEFORE_SKIP', 1)));
+    }
+
+    private function unavailableRetrySeconds(): int
+    {
+        return max(3600, min(2592000, $this->envInt('STEAM_UNAVAILABLE_RETRY_SECONDS', 604800)));
     }
 
     private function envInt(string $name, int $default): int
@@ -559,7 +953,9 @@ final class IncrementalBattleService
         $values = is_file($path) ? parse_ini_file($path, false, INI_SCANNER_RAW) : false;
         $value = is_array($values) ? ($values[$name] ?? null) : null;
 
-        return is_string($value) && filter_var($value, FILTER_VALIDATE_INT) !== false ? (int) $value : $default;
+        return is_string($value) && filter_var($value, FILTER_VALIDATE_INT) !== false
+            ? (int) $value
+            : $default;
     }
 
     private function cooldownUntil(): ?int
