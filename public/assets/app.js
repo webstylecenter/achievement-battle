@@ -5,6 +5,7 @@ const battleGrid = document.getElementById('battle-grid');
 const winnerBanner = document.getElementById('winner-banner');
 const snapshotTime = document.getElementById('snapshot-time');
 const competitionNote = document.getElementById('competition-note');
+const syncStatus = document.getElementById('sync-status');
 const statsGrid = document.getElementById('stats-grid');
 const recentGames = document.getElementById('recent-games');
 const sharedGames = document.getElementById('shared-games');
@@ -74,7 +75,8 @@ function renderBattle(data) {
     }
 
     renderCompetitionNote(players, competition);
-    renderHero(players, competition);
+    renderSyncStatus(data.sync ?? {});
+    renderHero(players, competition, data.sync ?? {});
     renderStats(players, competition);
     renderRecent(players);
     renderShared(players, data.shared_games ?? []);
@@ -106,7 +108,7 @@ function renderCompetitionNote(players, competition) {
     competitionNote.textContent = message;
 }
 
-function renderHero(players, competition) {
+function renderHero(players, competition, sync) {
     const maxAchievements = Math.max(...players.map((player) => player.achievement_count), 1);
     const counterLabel = competition.starts_at ? 'achievements since battle start' : 'counted achievements';
     const completedLabel = competition.starts_at ? 'perfect games since start' : 'perfect games';
@@ -172,11 +174,48 @@ function renderHero(players, competition) {
                 return;
             }
 
+            if (sync.initial_complete === false) {
+                const pendingGames = Number(sync.pending_games ?? 0);
+                winnerBanner.textContent = `Initial Steam sync in progress — ${numberFormatter.format(pendingGames)} game${pendingGames === 1 ? '' : 's'} remaining. Scores are provisional.`;
+                winnerBanner.hidden = false;
+                return;
+            }
+
             revealWinner(players);
         }
 
         requestAnimationFrame(tick);
     }, delay);
+}
+
+function renderSyncStatus(sync) {
+    if (syncStatus === null) {
+        return;
+    }
+
+    const pendingGames = Number(sync.pending_games ?? 0);
+    const missingGames = Number(sync.missing_games ?? 0);
+    const rateLimitedUntil = Number(sync.rate_limited_until ?? 0);
+    const rateLimited = rateLimitedUntil > Math.floor(Date.now() / 1000);
+
+    if (sync.complete !== false && !rateLimited) {
+        syncStatus.hidden = true;
+        syncStatus.textContent = '';
+        return;
+    }
+
+    let message = sync.initial_complete === false
+        ? `Initial Steam sync: ${numberFormatter.format(missingGames)} games still need achievement data.`
+        : `${numberFormatter.format(pendingGames)} recently changed games are still being refreshed; cached values remain visible.`;
+
+    if (rateLimited) {
+        message += ` Steam rate limit reached; automatic requests are paused until ${dateFormatter.format(new Date(rateLimitedUntil * 1000))}.`;
+    } else if (pendingGames > 0) {
+        message += ' The next refresh continues from the remaining games instead of starting over.';
+    }
+
+    syncStatus.textContent = message;
+    syncStatus.hidden = false;
 }
 
 function revealWinner(players) {
