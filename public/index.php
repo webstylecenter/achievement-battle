@@ -27,6 +27,7 @@
                 <h1 id="battle-title">Peter vs Florian</h1>
                 <p class="hero-intro">One scoreboard. Every counted achievement. No mercy.</p>
                 <p class="competition-note" id="competition-note"></p>
+                <div class="config-note" id="sync-status" hidden></div>
 
                 <div class="battle-grid" id="battle-grid" aria-live="polite">
                     <article class="fighter fighter-loading">
