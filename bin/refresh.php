@@ -62,25 +62,37 @@ if (is_array($sync)) {
     $pending = is_int($sync['pending_games'] ?? null) ? $sync['pending_games'] : 0;
     $missing = is_int($sync['missing_games'] ?? null) ? $sync['missing_games'] : 0;
     $processed = is_int($sync['processed_this_run'] ?? null) ? $sync['processed_this_run'] : 0;
+    $unavailable = is_int($sync['unavailable_games'] ?? null) ? $sync['unavailable_games'] : 0;
+    $markedUnavailable = is_int($sync['temporarily_unavailable_this_run'] ?? null)
+        ? $sync['temporarily_unavailable_this_run']
+        : 0;
     $cooldownUntil = is_int($sync['rate_limited_until'] ?? null) ? $sync['rate_limited_until'] : 0;
 
     fwrite(
         STDOUT,
         sprintf(
-            "Sync progress: %d processed this run, %d pending, %d without initial data.\n",
+            "Sync progress: %d processed, %d temporarily skipped this run; "
+            . "%d pending, %d without initial data, %d temporarily unavailable.\n",
             $processed,
+            $markedUnavailable,
             $pending,
             $missing,
+            $unavailable,
         ),
     );
 
     if ($cooldownUntil > time()) {
         fwrite(
             STDOUT,
-            sprintf("Steam rate limit cooldown until %s. Re-running before then keeps current progress.\n", gmdate(DATE_ATOM, $cooldownUntil)),
+            sprintf(
+                "Steam rate limit cooldown until %s. Re-running before then keeps current progress.\n",
+                gmdate(DATE_ATOM, $cooldownUntil),
+            ),
         );
     } elseif ($pending > 0) {
-        fwrite(STDOUT, "Run this command again to continue from the remaining games.\n");
+        fwrite(STDOUT, "The next run continues from the remaining games.\n");
+    } elseif ($unavailable > 0) {
+        fwrite(STDOUT, "Sync is complete; temporarily unavailable games will be retried automatically later.\n");
     }
 }
 
