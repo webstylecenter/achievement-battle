@@ -1,0 +1,7 @@
+parameters:
+    level: 10
+    paths:
+        - src
+        - public/api.php
+        - bin/refresh.php
+    tmpDir: var/cache/phpstan
