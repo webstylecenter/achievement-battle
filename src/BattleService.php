@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AchievementBattle;
 
+use DateTimeImmutable;
+use DateTimeZone;
 use RuntimeException;
 
 final class BattleService
@@ -27,25 +29,19 @@ final class BattleService
     public function refresh(): array
     {
         $players = [];
-        $playerGames = [];
-        $playerAchievements = [];
+        $gamesByPlayer = [];
+        $achievementsByPlayer = [];
+        $syncByPlayer = [];
         $excluded = $this->config->excludedAppIds();
 
         foreach ($this->config->players() as $playerConfig) {
             $steamId = $playerConfig['profile_type'] === 'vanity'
                 ? $this->steam->resolveVanityUrl($playerConfig['profile'])
                 : $playerConfig['profile'];
-
             $summary = $this->steam->playerSummary($steamId);
-            $ownedGames = $this->steam->ownedGames($steamId);
-            $recentGames = $this->steam->recentlyPlayedGames(
-                $steamId,
-                max(10, $this->config->recentGameCount()),
-            );
-
             $games = [];
 
-            foreach ($ownedGames as $game) {
+            foreach ($this->steam->ownedGames($steamId) as $game) {
                 $appId = $this->intValue($game['appid'] ?? null);
 
                 if ($appId === null || isset($excluded[$appId])) {
@@ -55,50 +51,56 @@ final class BattleService
                 $games[$appId] = $this->normalizeGame($game);
             }
 
-            $players[$playerConfig['key']] = [
-                'key' => $playerConfig['key'],
-                'configured_name' => $playerConfig['display_name'],
+            $playerKey = $playerConfig['key'];
+            $achievementLoad = $this->loadAchievements($playerKey, $steamId, $games);
+            $players[$playerKey] = [
+                'key' => $playerKey,
+                'name' => $playerConfig['display_name'],
+                'fighter_image' => $playerConfig['fighter_image'],
                 'steam_id' => $steamId,
                 'steam_name' => $this->stringValue($summary['personaname'] ?? null) ?? $playerConfig['display_name'],
                 'avatar' => $this->stringValue($summary['avatarfull'] ?? null) ?? '',
                 'profile_url' => $this->stringValue($summary['profileurl'] ?? null) ?? '',
-                'recent_games_raw' => $recentGames,
+                'account_created' => $this->intValue($summary['timecreated'] ?? null),
+                'recent_raw' => $this->steam->recentlyPlayedGames(
+                    $steamId,
+                    max(10, $this->config->recentGameCount()),
+                ),
             ];
-            $playerGames[$playerConfig['key']] = $games;
-            $playerAchievements[$playerConfig['key']] = $this->loadAchievements(
-                $playerConfig['key'],
-                $steamId,
-                $games,
+            $gamesByPlayer[$playerKey] = $games;
+            $achievementsByPlayer[$playerKey] = $achievementLoad['data'];
+            $syncByPlayer[$playerKey] = $achievementLoad['sync'];
+        }
+
+        $this->warmRarityCache($achievementsByPlayer);
+        $competition = $this->competitionStart($players);
+        $output = [];
+
+        foreach ($players as $playerKey => $player) {
+            $output[$playerKey] = $this->buildPlayer(
+                $player,
+                $gamesByPlayer[$playerKey],
+                $achievementsByPlayer[$playerKey],
+                $syncByPlayer[$playerKey],
+                $competition,
             );
         }
 
-        $this->warmGlobalPercentageCache($playerAchievements);
+        $keys = array_keys($output);
 
-        $playerOutput = [];
-
-        foreach ($players as $playerKey => $player) {
-            $games = $playerGames[$playerKey];
-            $achievements = $playerAchievements[$playerKey];
-            $playerOutput[$playerKey] = $this->buildPlayerOutput($player, $games, $achievements);
-        }
-
-        $playerKeys = array_keys($playerOutput);
-
-        if (count($playerKeys) !== 2) {
+        if (count($keys) !== 2) {
             throw new RuntimeException('Exactly two player results are required.');
         }
 
         $snapshot = [
             'generated_at' => gmdate(DATE_ATOM),
-            'players' => [
-                $playerOutput[$playerKeys[0]],
-                $playerOutput[$playerKeys[1]],
-            ],
-            'shared_games' => $this->buildSharedGames(
-                $playerKeys[0],
-                $playerKeys[1],
-                $playerGames,
-                $playerAchievements,
+            'competition' => $competition,
+            'players' => [$output[$keys[0]], $output[$keys[1]]],
+            'shared_games' => $this->sharedGames(
+                $keys[0],
+                $keys[1],
+                $gamesByPlayer,
+                $achievementsByPlayer,
             ),
             'excluded_games' => array_map(
                 static fn (string $name, int $appId): array => ['app_id' => $appId, 'name' => $name],
@@ -114,207 +116,319 @@ final class BattleService
 
     /**
      * @param array<int, array<string, mixed>> $games
-     * @return array<int, array{total: int, unlocked: int, achievements: list<array<string, mixed>>}>
+     * @return array{data: array<int, array<string, mixed>>, sync: array<string, int>}
      */
     private function loadAchievements(string $playerKey, string $steamId, array $games): array
     {
-        $result = [];
+        $data = [];
         $requests = [];
+        $stale = [];
+        $sync = [
+            'requested_games' => 0,
+            'cached_games' => 0,
+            'refreshed_games' => 0,
+            'stale_cache_games' => 0,
+            'no_achievement_games' => 0,
+        ];
 
         foreach ($games as $appId => $game) {
-            $playtimeMinutes = $this->intValue($game['playtime_forever'] ?? null) ?? 0;
-            $lastPlayed = $this->intValue($game['rtime_last_played'] ?? null) ?? 0;
-            $fingerprint = sprintf('%d:%d', $playtimeMinutes, $lastPlayed);
+            $playtime = $this->intValue($game['playtime_forever'] ?? null) ?? 0;
+
+            if ($playtime <= 0) {
+                continue;
+            }
+
+            $fingerprint = sprintf(
+                '%d:%d',
+                $playtime,
+                $this->intValue($game['rtime_last_played'] ?? null) ?? 0,
+            );
             $cacheKey = sprintf('achievements-%s-%d', $playerKey, $appId);
             $cached = $this->cache->read($cacheKey);
-            $cachedFingerprint = is_array($cached)
-                ? $this->stringValue($cached['game_fingerprint'] ?? null)
+            $cachedData = is_array($cached) && is_array($cached['data'] ?? null)
+                ? $cached['data']
                 : null;
-            $cachedData = is_array($cached) && is_array($cached['data'] ?? null) ? $cached['data'] : null;
 
-            if ($cachedFingerprint === $fingerprint && is_array($cachedData)) {
-                $result[$appId] = $this->normalizeAchievementPayload($cachedData);
+            if (
+                is_array($cachedData)
+                && $this->stringValue($cached['game_fingerprint'] ?? null) === $fingerprint
+            ) {
+                $data[$appId] = $cachedData;
+                $sync['cached_games']++;
+                $sync['no_achievement_games'] += ($cachedData['total'] ?? 0) === 0 ? 1 : 0;
                 continue;
             }
 
-            if ($playtimeMinutes <= 0) {
-                continue;
+            if (is_array($cachedData)) {
+                $stale[$appId] = $cachedData;
             }
 
-            $requests[] = [
-                'key' => (string) $appId,
-                'steam_id' => $steamId,
-                'app_id' => $appId,
-            ];
+            $requests[] = ['key' => (string) $appId, 'steam_id' => $steamId, 'app_id' => $appId];
         }
 
+        $sync['requested_games'] = count($requests);
         $responses = $this->steam->playerAchievementsBatch($requests);
+        $failed = [];
 
         foreach ($requests as $request) {
             $appId = $request['app_id'];
-            $response = $responses[$request['key']] ?? null;
-            $playerStats = is_array($response) ? ($response['playerstats'] ?? null) : null;
-            $success = is_array($playerStats) && ($playerStats['success'] ?? null) === true;
-            $achievementList = is_array($playerStats) ? ($playerStats['achievements'] ?? null) : null;
+            $achievementData = $this->achievementData($responses[$request['key']] ?? null);
 
-            if ($response === null) {
+            if ($achievementData === null) {
+                if (isset($stale[$appId])) {
+                    $data[$appId] = $stale[$appId];
+                    $sync['stale_cache_games']++;
+                    continue;
+                }
+
+                $failed[] = sprintf('%s (%d)', $games[$appId]['name'] ?? 'Unknown game', $appId);
                 continue;
             }
 
-            $data = [
-                'success' => $success,
-                'achievements' => is_array($achievementList)
-                    ? array_values(array_filter($achievementList, 'is_array'))
-                    : [],
-            ];
-            $normalized = $this->normalizeAchievementPayload($data);
-            $result[$appId] = $normalized;
+            $data[$appId] = $achievementData;
+            $sync['refreshed_games']++;
+            $sync['no_achievement_games'] += $achievementData['total'] === 0 ? 1 : 0;
             $this->cache->write(sprintf('achievements-%s-%d', $playerKey, $appId), [
                 'game_fingerprint' => sprintf(
                     '%d:%d',
                     $this->intValue($games[$appId]['playtime_forever'] ?? null) ?? 0,
                     $this->intValue($games[$appId]['rtime_last_played'] ?? null) ?? 0,
                 ),
-                'data' => $data,
+                'data' => $achievementData,
             ]);
         }
 
-        return $result;
+        if ($failed !== []) {
+            throw new RuntimeException(sprintf(
+                'Achievement sync for %s is incomplete after retries. Previous snapshot kept. Failed: %s',
+                $playerKey,
+                implode(', ', $failed),
+            ));
+        }
+
+        return ['data' => $data, 'sync' => $sync];
     }
 
     /**
-     * @param array<string, mixed> $data
-     * @return array{total: int, unlocked: int, achievements: list<array<string, mixed>>}
+     * @param array<string, mixed>|null $response
+     * @return array{total: int, unlocked: int, achievements: list<array<string, mixed>>}|null
      */
-    private function normalizeAchievementPayload(array $data): ?array
+    private function achievementData(?array $response): ?array
     {
-        $achievementList = $data['achievements'] ?? null;
+        if ($response === null) {
+            return null;
+        }
 
-        if (!is_array($achievementList)) {
-            $achievementList = [];
+        $stats = $response['playerstats'] ?? null;
+
+        if (!is_array($stats)) {
+            return null;
+        }
+
+        if (($stats['success'] ?? null) !== true) {
+            $error = strtolower($this->stringValue($stats['error'] ?? null) ?? '');
+
+            return str_contains($error, 'no stats') || str_contains($error, 'has no achievements')
+                ? ['total' => 0, 'unlocked' => 0, 'achievements' => []]
+                : null;
+        }
+
+        $items = $stats['achievements'] ?? [];
+
+        if (!is_array($items)) {
+            return ['total' => 0, 'unlocked' => 0, 'achievements' => []];
         }
 
         $achievements = [];
         $unlocked = 0;
 
-        foreach ($achievementList as $achievement) {
-            if (!is_array($achievement)) {
+        foreach ($items as $item) {
+            if (!is_array($item)) {
                 continue;
             }
 
-            $achieved = $this->intValue($achievement['achieved'] ?? null) === 1;
-
-            if ($achieved) {
-                $unlocked++;
-            }
-
+            $achieved = $this->intValue($item['achieved'] ?? null) === 1;
+            $unlocked += $achieved ? 1 : 0;
             $achievements[] = [
-                'api_name' => $this->stringValue($achievement['apiname'] ?? null) ?? '',
-                'name' => $this->stringValue($achievement['name'] ?? null)
-                    ?? $this->stringValue($achievement['apiname'] ?? null)
+                'api_name' => $this->stringValue($item['apiname'] ?? null) ?? '',
+                'name' => $this->stringValue($item['name'] ?? null)
+                    ?? $this->stringValue($item['apiname'] ?? null)
                     ?? 'Unknown achievement',
-                'description' => $this->stringValue($achievement['description'] ?? null) ?? '',
+                'description' => $this->stringValue($item['description'] ?? null) ?? '',
                 'achieved' => $achieved,
-                'unlock_time' => $this->intValue($achievement['unlocktime'] ?? null) ?? 0,
+                'unlock_time' => $this->intValue($item['unlocktime'] ?? null) ?? 0,
             ];
         }
 
+        return ['total' => count($achievements), 'unlocked' => $unlocked, 'achievements' => $achievements];
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $players
+     * @return array{mode: string, timestamp: int|null, starts_at: string|null, source_player: string|null}
+     */
+    private function competitionStart(array $players): array
+    {
+        $mode = $this->config->achievementStartMode();
+
+        if ($mode === 'all_time') {
+            return ['mode' => $mode, 'timestamp' => null, 'starts_at' => null, 'source_player' => null];
+        }
+
+        if ($mode === 'date') {
+            $date = $this->config->achievementStartDate();
+
+            if ($date === null) {
+                throw new RuntimeException('achievement_start.date is required when mode is date.');
+            }
+
+            $dateTime = DateTimeImmutable::createFromFormat('!Y-m-d', $date, new DateTimeZone('UTC'));
+
+            if ($dateTime === false) {
+                throw new RuntimeException('Unable to parse achievement_start.date.');
+            }
+
+            return [
+                'mode' => $mode,
+                'timestamp' => $dateTime->getTimestamp(),
+                'starts_at' => $dateTime->format(DATE_ATOM),
+                'source_player' => null,
+            ];
+        }
+
+        $playerKey = $this->config->achievementStartPlayerKey();
+        $timestamp = $playerKey !== null && isset($players[$playerKey])
+            ? $this->intValue($players[$playerKey]['account_created'] ?? null)
+            : null;
+
+        if ($playerKey === null || $timestamp === null || $timestamp <= 0) {
+            throw new RuntimeException('Unable to determine the configured player account creation date.');
+        }
+
         return [
-            'total' => count($achievements),
-            'unlocked' => $unlocked,
-            'achievements' => $achievements,
+            'mode' => $mode,
+            'timestamp' => $timestamp,
+            'starts_at' => gmdate(DATE_ATOM, $timestamp),
+            'source_player' => $playerKey,
         ];
     }
 
     /**
      * @param array<string, mixed> $player
      * @param array<int, array<string, mixed>> $games
-     * @param array<int, array{total: int, unlocked: int, achievements: list<array<string, mixed>>}> $achievements
+     * @param array<int, array<string, mixed>> $achievementData
+     * @param array<string, int> $sync
+     * @param array<string, mixed> $competition
      * @return array<string, mixed>
      */
-    private function buildPlayerOutput(array $player, array $games, array $achievements): array
-    {
-        $achievementTotal = 0;
-        $completedGames = 0;
+    private function buildPlayer(
+        array $player,
+        array $games,
+        array $achievementData,
+        array $sync,
+        array $competition,
+    ): array {
+        $lifetime = 0;
+        $battle = 0;
+        $lifetimePerfect = 0;
+        $battlePerfect = 0;
         $gamesWithAchievements = 0;
-        $playtimeMinutes = 0;
+        $playtime = 0;
+        $start = $this->intValue($competition['timestamp'] ?? null);
+        $isSourcePlayer = ($competition['mode'] ?? null) === 'player_created'
+            && ($competition['source_player'] ?? null) === ($player['key'] ?? null);
 
         foreach ($games as $appId => $game) {
-            $playtimeMinutes += $this->intValue($game['playtime_forever'] ?? null) ?? 0;
-            $gameAchievements = $achievements[$appId] ?? null;
+            $playtime += $this->intValue($game['playtime_forever'] ?? null) ?? 0;
+            $stats = $achievementData[$appId] ?? null;
 
-            if ($gameAchievements === null || $gameAchievements['total'] <= 0) {
+            if (!is_array($stats) || ($stats['total'] ?? 0) <= 0) {
                 continue;
             }
 
             $gamesWithAchievements++;
-            $achievementTotal += $gameAchievements['unlocked'];
+            $unlocked = is_int($stats['unlocked'] ?? null) ? $stats['unlocked'] : 0;
+            $total = is_int($stats['total'] ?? null) ? $stats['total'] : 0;
+            $lifetime += $unlocked;
+            $isPerfect = $total > 0 && $unlocked === $total;
+            $lifetimePerfect += $isPerfect ? 1 : 0;
 
-            if ($gameAchievements['total'] > 0 && $gameAchievements['unlocked'] === $gameAchievements['total']) {
-                $completedGames++;
+            if ($start === null || $isSourcePlayer) {
+                $battle += $unlocked;
+                $battlePerfect += $isPerfect ? 1 : 0;
+                continue;
             }
+
+            $latestUnlock = 0;
+
+            foreach (($stats['achievements'] ?? []) as $achievement) {
+                if (!is_array($achievement) || ($achievement['achieved'] ?? false) !== true) {
+                    continue;
+                }
+
+                $unlockTime = $this->intValue($achievement['unlock_time'] ?? null) ?? 0;
+                $latestUnlock = max($latestUnlock, $unlockTime);
+                $battle += $unlockTime >= $start ? 1 : 0;
+            }
+
+            $battlePerfect += $isPerfect && $latestUnlock >= $start ? 1 : 0;
         }
 
         return [
             'key' => $player['key'],
-            'name' => $player['configured_name'],
+            'name' => $player['name'],
             'steam_name' => $player['steam_name'],
             'steam_id' => $player['steam_id'],
             'avatar' => $player['avatar'],
+            'fighter_image' => $player['fighter_image'],
             'profile_url' => $player['profile_url'],
-            'achievement_count' => $achievementTotal,
-            'completed_games' => $completedGames,
+            'achievement_count' => $battle,
+            'lifetime_achievement_count' => $lifetime,
+            'completed_games' => $battlePerfect,
+            'lifetime_completed_games' => $lifetimePerfect,
             'games_with_achievements' => $gamesWithAchievements,
             'games_included' => count($games),
-            'hours_played' => round($playtimeMinutes / 60, 1),
-            'recent_games' => $this->recentGames($games, $player['recent_games_raw']),
-            'rare_achievements' => $this->rareAchievements($games, $achievements),
+            'hours_played' => round($playtime / 60, 1),
+            'recent_games' => $this->recentGames($games, $player['recent_raw'] ?? []),
+            'rare_achievements' => $this->rareAchievements($games, $achievementData),
+            'sync' => $sync,
         ];
     }
 
     /**
      * @param array<int, array<string, mixed>> $games
-     * @param mixed $recentGamesRaw
      * @return list<array<string, mixed>>
      */
-    private function recentGames(array $games, mixed $recentGamesRaw): array
+    private function recentGames(array $games, mixed $recentRaw): array
     {
         $recent = [];
 
-        if (is_array($recentGamesRaw)) {
-            foreach ($recentGamesRaw as $game) {
-                if (!is_array($game)) {
+        if (is_array($recentRaw)) {
+            foreach ($recentRaw as $rawGame) {
+                if (!is_array($rawGame)) {
                     continue;
                 }
 
-                $appId = $this->intValue($game['appid'] ?? null);
+                $appId = $this->intValue($rawGame['appid'] ?? null);
 
-                if ($appId === null || !isset($games[$appId])) {
-                    continue;
+                if ($appId !== null && isset($games[$appId])) {
+                    $recent[$appId] = $this->publicGame($games[$appId]);
                 }
-
-                $recent[$appId] = $this->publicGame($games[$appId]);
             }
         }
 
-        if (count($recent) < $this->config->recentGameCount()) {
-            $fallback = $games;
-            uasort(
-                $fallback,
-                fn (array $left, array $right): int => ($this->intValue($right['rtime_last_played'] ?? null) ?? 0)
-                    <=> ($this->intValue($left['rtime_last_played'] ?? null) ?? 0),
-            );
+        $fallback = $games;
+        uasort($fallback, fn (array $a, array $b): int =>
+            ($this->intValue($b['rtime_last_played'] ?? null) ?? 0)
+            <=> ($this->intValue($a['rtime_last_played'] ?? null) ?? 0));
 
-            foreach ($fallback as $appId => $game) {
-                if (isset($recent[$appId])) {
-                    continue;
-                }
-
+        foreach ($fallback as $appId => $game) {
+            if (!isset($recent[$appId])) {
                 $recent[$appId] = $this->publicGame($game);
+            }
 
-                if (count($recent) >= $this->config->recentGameCount()) {
-                    break;
-                }
+            if (count($recent) >= $this->config->recentGameCount()) {
+                break;
             }
         }
 
@@ -322,111 +436,93 @@ final class BattleService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $games
-     * @param array<int, array{total: int, unlocked: int, achievements: list<array<string, mixed>>}> $achievements
-     * @return list<array<string, mixed>>
+     * @param array<string, array<int, array<string, mixed>>> $achievementData
      */
-    private function rareAchievements(array $games, array $achievements): array
+    private function warmRarityCache(array $achievementData): void
     {
-        $rare = [];
-
-        foreach ($achievements as $appId => $gameAchievements) {
-            $unlocked = array_values(array_filter(
-                $gameAchievements['achievements'],
-                static fn (array $achievement): bool => ($achievement['achieved'] ?? false) === true,
-            ));
-
-            if ($unlocked === []) {
-                continue;
-            }
-
-            $percentages = $this->globalPercentages($appId);
-
-            if ($percentages === []) {
-                continue;
-            }
-
-            foreach ($unlocked as $achievement) {
-                $apiName = $this->stringValue($achievement['api_name'] ?? null);
-
-                if ($apiName === null || !isset($percentages[$apiName])) {
-                    continue;
-                }
-
-                $game = $games[$appId] ?? [];
-                $rare[] = [
-                    'app_id' => $appId,
-                    'game_name' => $this->stringValue($game['name'] ?? null) ?? 'Unknown game',
-                    'game_image' => $this->headerImage($appId),
-                    'name' => $this->stringValue($achievement['name'] ?? null) ?? $apiName,
-                    'description' => $this->stringValue($achievement['description'] ?? null) ?? '',
-                    'percentage' => $percentages[$apiName],
-                    'unlock_time' => $this->intValue($achievement['unlock_time'] ?? null) ?? 0,
-                ];
-            }
-        }
-
-        usort(
-            $rare,
-            static fn (array $left, array $right): int => ($left['percentage'] <=> $right['percentage'])
-                ?: (($right['unlock_time'] ?? 0) <=> ($left['unlock_time'] ?? 0)),
-        );
-
-        return array_slice($rare, 0, $this->config->rareAchievementCount());
-    }
-
-    /**
-     * @param array<string, array<int, array{total: int, unlocked: int, achievements: list<array<string, mixed>>}>> $playerAchievements
-     */
-    private function warmGlobalPercentageCache(array $playerAchievements): void
-    {
-        $missingAppIds = [];
-
-        foreach ($playerAchievements as $achievementsByGame) {
-            foreach ($achievementsByGame as $appId => $gameAchievements) {
-                if ($gameAchievements['unlocked'] <= 0) {
-                    continue;
-                }
-
-                $cacheKey = sprintf('global-percentages-%d', $appId);
-
-                if ($this->cache->read($cacheKey, $this->config->rarityCacheMaxAgeSeconds()) === null) {
-                    $missingAppIds[$appId] = $appId;
-                }
-            }
-        }
-
-        if ($missingAppIds === []) {
+        if ($this->config->rareAchievementCount() <= 0) {
             return;
         }
 
-        $responses = $this->steam->globalAchievementPercentagesBatch(array_values($missingAppIds));
+        $missing = [];
 
-        foreach ($responses as $appId => $response) {
+        foreach ($achievementData as $byGame) {
+            foreach ($byGame as $appId => $stats) {
+                if (($stats['unlocked'] ?? 0) > 0
+                    && $this->cache->read(
+                        sprintf('global-percentages-%d', $appId),
+                        $this->config->rarityCacheMaxAgeSeconds(),
+                    ) === null
+                ) {
+                    $missing[$appId] = $appId;
+                }
+            }
+        }
+
+        foreach ($this->steam->globalAchievementPercentagesBatch(array_values($missing)) as $appId => $response) {
             if ($response !== null) {
                 $this->cache->write(sprintf('global-percentages-%d', $appId), $response);
             }
         }
     }
 
+    /**
+     * @param array<int, array<string, mixed>> $games
+     * @param array<int, array<string, mixed>> $achievementData
+     * @return list<array<string, mixed>>
+     */
+    private function rareAchievements(array $games, array $achievementData): array
+    {
+        $rare = [];
+
+        foreach ($achievementData as $appId => $stats) {
+            $percentages = $this->globalPercentages($appId);
+
+            if ($percentages === []) {
+                continue;
+            }
+
+            foreach (($stats['achievements'] ?? []) as $achievement) {
+                if (!is_array($achievement) || ($achievement['achieved'] ?? false) !== true) {
+                    continue;
+                }
+
+                $apiName = $this->stringValue($achievement['api_name'] ?? null);
+
+                if ($apiName === null || !isset($percentages[$apiName])) {
+                    continue;
+                }
+
+                $rare[] = [
+                    'game_name' => $games[$appId]['name'] ?? 'Unknown game',
+                    'game_image' => $this->headerImage($appId),
+                    'name' => $achievement['name'] ?? $apiName,
+                    'percentage' => $percentages[$apiName],
+                    'unlock_time' => $achievement['unlock_time'] ?? 0,
+                ];
+            }
+        }
+
+        usort($rare, static fn (array $a, array $b): int =>
+            ($a['percentage'] <=> $b['percentage']) ?: ($b['unlock_time'] <=> $a['unlock_time']));
+
+        return array_slice($rare, 0, $this->config->rareAchievementCount());
+    }
+
     /** @return array<string, float> */
     private function globalPercentages(int $appId): array
     {
-        $cacheKey = sprintf('global-percentages-%d', $appId);
-        $data = $this->cache->read($cacheKey, $this->config->rarityCacheMaxAgeSeconds());
-
-        if ($data === null) {
-            return [];
-        }
-
-        $achievementPercentages = $data['achievementpercentages'] ?? null;
-        $items = is_array($achievementPercentages) ? ($achievementPercentages['achievements'] ?? null) : null;
+        $data = $this->cache->read(
+            sprintf('global-percentages-%d', $appId),
+            $this->config->rarityCacheMaxAgeSeconds(),
+        );
+        $container = is_array($data) ? ($data['achievementpercentages'] ?? null) : null;
+        $items = is_array($container) ? ($container['achievements'] ?? null) : null;
+        $result = [];
 
         if (!is_array($items)) {
-            return [];
+            return $result;
         }
-
-        $percentages = [];
 
         foreach ($items as $item) {
             if (!is_array($item)) {
@@ -434,65 +530,84 @@ final class BattleService
             }
 
             $name = $this->stringValue($item['name'] ?? null);
-            $percent = $item['percent'] ?? null;
+            $percent = $this->floatValue($item['percent'] ?? null);
 
-            if ($name !== null && (is_float($percent) || is_int($percent))) {
-                $percentages[$name] = (float) $percent;
+            if ($name !== null && $percent !== null) {
+                $result[$name] = $percent;
             }
         }
 
-        return $percentages;
+        return $result;
     }
 
     /**
-     * @param array<string, array<int, array<string, mixed>>> $playerGames
-     * @param array<string, array<int, array{total: int, unlocked: int, achievements: list<array<string, mixed>>}>> $playerAchievements
+     * @param array<string, array<int, array<string, mixed>>> $gamesByPlayer
+     * @param array<string, array<int, array<string, mixed>>> $achievementsByPlayer
      * @return list<array<string, mixed>>
      */
-    private function buildSharedGames(
+    private function sharedGames(
         string $leftKey,
         string $rightKey,
-        array $playerGames,
-        array $playerAchievements,
+        array $gamesByPlayer,
+        array $achievementsByPlayer,
     ): array {
-        $leftGames = $playerGames[$leftKey] ?? [];
-        $rightGames = $playerGames[$rightKey] ?? [];
-        $sharedAppIds = array_intersect(array_keys($leftGames), array_keys($rightGames));
+        $leftGames = $gamesByPlayer[$leftKey] ?? [];
+        $rightGames = $gamesByPlayer[$rightKey] ?? [];
+        $leftAchievements = $achievementsByPlayer[$leftKey] ?? [];
+        $rightAchievements = $achievementsByPlayer[$rightKey] ?? [];
         $rows = [];
 
-        foreach ($sharedAppIds as $appId) {
-            $leftAchievements = $playerAchievements[$leftKey][$appId] ?? null;
-            $rightAchievements = $playerAchievements[$rightKey][$appId] ?? null;
+        foreach (array_intersect(array_keys($leftGames), array_keys($rightGames)) as $appId) {
+            $leftMinutes = $this->intValue($leftGames[$appId]['playtime_forever'] ?? null) ?? 0;
+            $rightMinutes = $this->intValue($rightGames[$appId]['playtime_forever'] ?? null) ?? 0;
 
-            if ($leftAchievements === null && $rightAchievements === null) {
+            if ($this->config->sharedGamesRequireBothPlayed() && ($leftMinutes <= 0 || $rightMinutes <= 0)) {
                 continue;
             }
 
-            $total = max($leftAchievements['total'] ?? 0, $rightAchievements['total'] ?? 0);
+            $left = $leftAchievements[$appId] ?? null;
+            $right = $rightAchievements[$appId] ?? null;
+
+            if (!is_array($left) || !is_array($right)) {
+                continue;
+            }
+
+            $total = max((int) ($left['total'] ?? 0), (int) ($right['total'] ?? 0));
+            $leftUnlocked = (int) ($left['unlocked'] ?? 0);
+            $rightUnlocked = (int) ($right['unlocked'] ?? 0);
 
             if ($total <= 0) {
                 continue;
             }
-            $leftUnlocked = $leftAchievements['unlocked'] ?? 0;
-            $rightUnlocked = $rightAchievements['unlocked'] ?? 0;
-            $game = $leftGames[$appId];
 
+            if ($this->config->sharedGamesExcludeCompletedByEither()
+                && ($leftUnlocked === (int) ($left['total'] ?? 0) || $rightUnlocked === (int) ($right['total'] ?? 0))
+            ) {
+                continue;
+            }
+
+            $lastPlayed = max(
+                $this->intValue($leftGames[$appId]['rtime_last_played'] ?? null) ?? 0,
+                $this->intValue($rightGames[$appId]['rtime_last_played'] ?? null) ?? 0,
+            );
+            $game = $leftGames[$appId];
             $rows[] = [
                 'app_id' => $appId,
-                'name' => $this->stringValue($game['name'] ?? null) ?? 'Unknown game',
+                'name' => $game['name'] ?? 'Unknown game',
                 'image' => $this->headerImage($appId),
                 'icon' => $this->iconImage($appId, $this->stringValue($game['img_icon_url'] ?? null) ?? ''),
                 'achievement_total' => $total,
+                'last_played' => $lastPlayed,
                 'players' => [
                     $leftKey => [
                         'unlocked' => $leftUnlocked,
-                        'percentage' => $total > 0 ? round(($leftUnlocked / $total) * 100, 1) : 0.0,
-                        'hours' => round(($this->intValue($leftGames[$appId]['playtime_forever'] ?? null) ?? 0) / 60, 1),
+                        'percentage' => round(($leftUnlocked / $total) * 100, 1),
+                        'hours' => round($leftMinutes / 60, 1),
                     ],
                     $rightKey => [
                         'unlocked' => $rightUnlocked,
-                        'percentage' => $total > 0 ? round(($rightUnlocked / $total) * 100, 1) : 0.0,
-                        'hours' => round(($this->intValue($rightGames[$appId]['playtime_forever'] ?? null) ?? 0) / 60, 1),
+                        'percentage' => round(($rightUnlocked / $total) * 100, 1),
+                        'hours' => round($rightMinutes / 60, 1),
                     ],
                 ],
                 'winner' => $leftUnlocked === $rightUnlocked
@@ -501,16 +616,13 @@ final class BattleService
             ];
         }
 
-        usort(
-            $rows,
-            static fn (array $left, array $right): int => ($right['achievement_total'] <=> $left['achievement_total'])
-                ?: strcmp((string) $left['name'], (string) $right['name']),
-        );
+        usort($rows, static fn (array $a, array $b): int =>
+            ($b['last_played'] <=> $a['last_played']) ?: strcmp((string) $a['name'], (string) $b['name']));
 
         return array_slice($rows, 0, $this->config->sharedGameLimit());
     }
 
-    /** @param array<string, mixed> $game */
+    /** @param array<string, mixed> $game @return array<string, mixed> */
     private function normalizeGame(array $game): array
     {
         $appId = $this->intValue($game['appid'] ?? null) ?? 0;
@@ -528,15 +640,13 @@ final class BattleService
         ];
     }
 
-    /** @param array<string, mixed> $game */
+    /** @param array<string, mixed> $game @return array<string, mixed> */
     private function publicGame(array $game): array
     {
-        $playtime = $this->intValue($game['playtime_forever'] ?? null) ?? 0;
-
         return [
             'app_id' => $this->intValue($game['appid'] ?? null) ?? 0,
             'name' => $this->stringValue($game['name'] ?? null) ?? 'Unknown game',
-            'hours' => round($playtime / 60, 1),
+            'hours' => round(($this->intValue($game['playtime_forever'] ?? null) ?? 0) / 60, 1),
             'last_played' => $this->intValue($game['rtime_last_played'] ?? null) ?? 0,
             'image' => $this->stringValue($game['image'] ?? null) ?? '',
             'icon' => $this->stringValue($game['icon'] ?? null) ?? '',
@@ -550,11 +660,7 @@ final class BattleService
 
     private function iconImage(int $appId, string $hash): string
     {
-        if ($hash === '') {
-            return $this->headerImage($appId);
-        }
-
-        return sprintf(
+        return $hash === '' ? '' : sprintf(
             'https://media.steampowered.com/steamcommunity/public/images/apps/%d/%s.jpg',
             $appId,
             rawurlencode($hash),
@@ -569,5 +675,12 @@ final class BattleService
     private function intValue(mixed $value): ?int
     {
         return is_int($value) ? $value : null;
+    }
+
+    private function floatValue(mixed $value): ?float
+    {
+        return is_float($value) || is_int($value)
+            ? (float) $value
+            : (is_string($value) && is_numeric($value) ? (float) $value : null);
     }
 }

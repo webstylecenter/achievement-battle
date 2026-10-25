@@ -19,6 +19,8 @@ $steam = new SteamApiClient(
     $config->steamApiKey(),
     $config->steamLanguage(),
     $config->steamConcurrency(),
+    $config->steamBatchDelayMilliseconds(),
+    $config->steamRetryCount(),
 );
 
 return new BattleService($config, $steam, $cache);

@@ -15,6 +15,8 @@ final class SteamApiClient
         private readonly string $apiKey,
         private readonly string $language,
         private readonly int $concurrency,
+        private readonly int $batchDelayMilliseconds,
+        private readonly int $retryCount,
     ) {
         if ($apiKey === '') {
             throw new RuntimeException('STEAM_API_KEY is missing. Copy .env.example to .env and configure it.');
@@ -26,7 +28,6 @@ final class SteamApiClient
         $data = $this->get('ISteamUser', 'ResolveVanityURL', 'v1', [
             'vanityurl' => $vanityUrl,
         ]);
-
         $response = $data['response'] ?? null;
 
         if (!is_array($response) || ($response['success'] ?? null) !== 1 || !is_string($response['steamid'] ?? null)) {
@@ -42,7 +43,6 @@ final class SteamApiClient
         $data = $this->get('ISteamUser', 'GetPlayerSummaries', 'v2', [
             'steamids' => $steamId,
         ]);
-
         $response = $data['response'] ?? null;
         $players = is_array($response) ? ($response['players'] ?? null) : null;
 
@@ -63,8 +63,11 @@ final class SteamApiClient
             'steamid' => $steamId,
             'include_appinfo' => 'true',
             'include_played_free_games' => 'true',
+            'include_free_sub' => 'true',
+            'skip_unvetted_apps' => 'false',
+            'include_family_licenses' => 'true',
+            'language' => $this->language,
         ]);
-
         $response = $data['response'] ?? null;
         $games = is_array($response) ? ($response['games'] ?? null) : null;
 
@@ -84,7 +87,6 @@ final class SteamApiClient
             'steamid' => $steamId,
             'count' => (string) $count,
         ]);
-
         $response = $data['response'] ?? null;
         $games = is_array($response) ? ($response['games'] ?? null) : null;
 
@@ -140,7 +142,10 @@ final class SteamApiClient
         return $result;
     }
 
-    /** @param array<string, scalar> $parameters */
+    /**
+     * @param array<string, scalar> $parameters
+     * @return array<string, mixed>
+     */
     private function get(string $interface, string $method, string $version, array $parameters): array
     {
         $data = $this->singleUrl($this->url($interface, $method, $version, $parameters), true);
@@ -171,25 +176,36 @@ final class SteamApiClient
     /** @return array<string, mixed>|null */
     private function singleUrl(string $url, bool $throwOnHttpError): ?array
     {
-        $handle = $this->createHandle($url);
-        $response = curl_exec($handle);
-        $httpCode = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
-        $error = curl_error($handle);
-        curl_close($handle);
+        $lastHttpCode = 0;
+        $lastError = '';
 
-        if ($response === false || $httpCode >= 400) {
-            if ($throwOnHttpError) {
-                throw new RuntimeException(
-                    sprintf('Steam API HTTP request failed with status %d: %s', $httpCode, $error),
-                );
+        for ($attempt = 1; $attempt <= $this->retryCount; $attempt++) {
+            $handle = $this->createHandle($url);
+            $response = curl_exec($handle);
+            $lastHttpCode = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+            $lastError = curl_error($handle);
+            curl_close($handle);
+
+            if (is_string($response) && $lastHttpCode < 400) {
+                $decoded = json_decode($response, true);
+
+                return is_array($decoded) ? $decoded : null;
             }
 
-            return null;
+            if (!$this->isRetryableHttpCode($lastHttpCode) || $attempt === $this->retryCount) {
+                break;
+            }
+
+            $this->retryDelay($attempt);
         }
 
-        $decoded = json_decode($response, true);
+        if ($throwOnHttpError) {
+            throw new RuntimeException(
+                sprintf('Steam API HTTP request failed with status %d: %s', $lastHttpCode, $lastError),
+            );
+        }
 
-        return is_array($decoded) ? $decoded : null;
+        return null;
     }
 
     /**
@@ -199,47 +215,86 @@ final class SteamApiClient
     private function multiGet(array $urls): array
     {
         $results = [];
-        $chunks = array_chunk($urls, $this->concurrency, true);
+        $pending = $urls;
 
-        foreach ($chunks as $chunk) {
-            $multiHandle = curl_multi_init();
-            /** @var array<string, CurlHandle> $handles */
-            $handles = [];
+        for ($attempt = 1; $attempt <= $this->retryCount && $pending !== []; $attempt++) {
+            $retry = [];
+            $chunks = array_chunk($pending, $this->concurrency, true);
 
-            foreach ($chunk as $key => $url) {
-                $handle = $this->createHandle($url);
-                $handles[$key] = $handle;
-                curl_multi_add_handle($multiHandle, $handle);
-            }
+            foreach ($chunks as $chunkIndex => $chunk) {
+                $multiHandle = curl_multi_init();
+                /** @var array<string, CurlHandle> $handles */
+                $handles = [];
 
-            do {
-                $status = curl_multi_exec($multiHandle, $active);
-
-                if ($status !== CURLM_OK) {
-                    break;
+                foreach ($chunk as $key => $url) {
+                    $handle = $this->createHandle($url);
+                    $handles[$key] = $handle;
+                    curl_multi_add_handle($multiHandle, $handle);
                 }
 
-                if ($active > 0) {
-                    curl_multi_select($multiHandle, 1.0);
+                do {
+                    $status = curl_multi_exec($multiHandle, $active);
+
+                    if ($status !== CURLM_OK) {
+                        break;
+                    }
+
+                    if ($active > 0) {
+                        curl_multi_select($multiHandle, 1.0);
+                    }
+                } while ($active > 0);
+
+                foreach ($handles as $key => $handle) {
+                    $response = curl_multi_getcontent($handle);
+                    $httpCode = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+                    $decoded = is_string($response) && $httpCode < 400
+                        ? json_decode($response, true)
+                        : null;
+
+                    if (is_array($decoded)) {
+                        $results[$key] = $decoded;
+                    } elseif ($this->isRetryableHttpCode($httpCode) && $attempt < $this->retryCount) {
+                        $retry[$key] = $urls[$key];
+                    } else {
+                        $results[$key] = null;
+                    }
+
+                    curl_multi_remove_handle($multiHandle, $handle);
+                    curl_close($handle);
                 }
-            } while ($active > 0);
 
-            foreach ($handles as $key => $handle) {
-                $response = curl_multi_getcontent($handle);
-                $httpCode = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
-                $decoded = is_string($response) && $httpCode < 400
-                    ? json_decode($response, true)
-                    : null;
+                curl_multi_close($multiHandle);
 
-                $results[$key] = is_array($decoded) ? $decoded : null;
-                curl_multi_remove_handle($multiHandle, $handle);
-                curl_close($handle);
+                if ($chunkIndex < count($chunks) - 1 && $this->batchDelayMilliseconds > 0) {
+                    usleep($this->batchDelayMilliseconds * 1000);
+                }
             }
 
-            curl_multi_close($multiHandle);
+            $pending = $retry;
+
+            if ($pending !== [] && $attempt < $this->retryCount) {
+                $this->retryDelay($attempt);
+            }
+        }
+
+        foreach ($urls as $key => $_url) {
+            if (!array_key_exists($key, $results)) {
+                $results[$key] = null;
+            }
         }
 
         return $results;
+    }
+
+    private function retryDelay(int $attempt): void
+    {
+        $milliseconds = max(500, $this->batchDelayMilliseconds) * (2 ** ($attempt - 1));
+        usleep(min($milliseconds, 8000) * 1000);
+    }
+
+    private function isRetryableHttpCode(int $httpCode): bool
+    {
+        return $httpCode === 0 || $httpCode === 429 || $httpCode >= 500;
     }
 
     private function createHandle(string $url): CurlHandle
@@ -254,8 +309,8 @@ final class SteamApiClient
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_TIMEOUT => 20,
-            CURLOPT_USERAGENT => 'AchievementBattle/1.0',
+            CURLOPT_TIMEOUT => 25,
+            CURLOPT_USERAGENT => 'AchievementBattle/1.2',
             CURLOPT_HTTPHEADER => ['Accept: application/json'],
         ]);
 

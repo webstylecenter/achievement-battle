@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 215" role="img" aria-label="Game artwork unavailable">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#10263d"/>
+      <stop offset="1" stop-color="#07111f"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4bbcff"/>
+      <stop offset="1" stop-color="#ff6b9a"/>
+    </linearGradient>
+  </defs>
+  <rect width="460" height="215" fill="url(#bg)"/>
+  <path d="M171 80c8-17 22-25 43-25h32c21 0 35 8 43 25l24 55c6 14-1 26-14 26-9 0-15-5-25-19l-11-14h-66l-11 14c-10 14-16 19-25 19-13 0-20-12-14-26z" fill="none" stroke="url(#accent)" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M194 92h30m-15-15v30" stroke="#f6f9ff" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="267" cy="88" r="6" fill="#f6f9ff"/>
+  <circle cx="286" cy="104" r="6" fill="#f6f9ff"/>
+  <text x="230" y="191" fill="#8fa7c1" font-family="system-ui, sans-serif" font-size="16" text-anchor="middle">ARTWORK UNAVAILABLE</text>
+</svg>

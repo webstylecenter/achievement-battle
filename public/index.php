@@ -12,11 +12,21 @@
 <body>
     <main>
         <section class="hero" id="battle-hero" aria-labelledby="battle-title">
+            <div class="versus-portraits" aria-hidden="true">
+                <div class="portrait-panel portrait-panel-left">
+                    <img id="left-portrait" src="/assets/fighters/peter.webp" alt="">
+                </div>
+                <div class="portrait-panel portrait-panel-right">
+                    <img id="right-portrait" src="/assets/fighters/florian.webp" alt="">
+                </div>
+                <div class="impact-burst"></div>
+            </div>
             <div class="hero-backdrop"></div>
             <div class="hero-content">
                 <p class="eyebrow">Steam Achievement Battle</p>
                 <h1 id="battle-title">Peter vs Florian</h1>
                 <p class="hero-intro">One scoreboard. Every counted achievement. No mercy.</p>
+                <p class="competition-note" id="competition-note"></p>
 
                 <div class="battle-grid" id="battle-grid" aria-live="polite">
                     <article class="fighter fighter-loading">
@@ -53,14 +63,14 @@
 
         <section class="section">
             <div class="section-heading">
-                <p class="eyebrow">Shared library</p>
-                <h2>Games both players have played</h2>
-                <p>Achievement progress is compared directly. Playtime is shown for context, not as a tiebreaker.</p>
+                <p class="eyebrow">Recent shared games</p>
+                <h2>Unfinished games both players have played</h2>
+                <p>Sorted by the most recent activity. Games where either player already reached 100% are hidden.</p>
             </div>
             <div class="shared-games" id="shared-games"></div>
         </section>
 
-        <section class="section">
+        <section class="section" id="rarity-section">
             <div class="section-heading">
                 <p class="eyebrow">Bragging rights</p>
                 <h2>Rarest unlocked achievements</h2>

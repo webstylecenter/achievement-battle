@@ -43,11 +43,88 @@ a {
     display: grid;
     align-items: center;
     padding: 4rem 1.25rem 3rem;
+    isolation: isolate;
+}
+
+.versus-portraits {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.portrait-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 58%;
+    overflow: hidden;
+    filter: saturate(1.08) contrast(1.06);
+}
+
+.portrait-panel::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(7, 17, 31, 0.08), rgba(7, 17, 31, 0.72) 72%, rgba(7, 17, 31, 0.98));
+}
+
+.portrait-panel img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.82;
+    transform: scale(1.08);
+}
+
+.portrait-panel-left {
+    left: 0;
+    clip-path: polygon(0 0, 94% 0, 79% 100%, 0 100%);
+    transform: translateX(-108%);
+    animation: portrait-enter-left 1.05s cubic-bezier(.18,.84,.24,1) 0.05s forwards;
+}
+
+.portrait-panel-left img {
+    object-position: 48% 38%;
+}
+
+.portrait-panel-right {
+    right: 0;
+    clip-path: polygon(21% 0, 100% 0, 100% 100%, 6% 100%);
+    transform: translateX(108%);
+    animation: portrait-enter-right 1.05s cubic-bezier(.18,.84,.24,1) 0.05s forwards;
+}
+
+.portrait-panel-right img {
+    object-position: 50% 38%;
+}
+
+.impact-burst {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    opacity: 0;
+    background: white;
+    box-shadow: 0 0 40px 20px rgba(255, 209, 102, 0.8);
+    transform: translate(-50%, -50%) scale(0.1);
+}
+
+.hero.impact .versus-portraits {
+    animation: versus-shake 0.42s linear;
+}
+
+.hero.impact .impact-burst {
+    animation: impact-burst 0.5s ease-out;
 }
 
 .hero-backdrop {
     position: absolute;
     inset: 0;
+    z-index: -1;
     background:
         linear-gradient(180deg, rgba(7, 17, 31, 0.2), rgba(7, 17, 31, 0.97)),
         radial-gradient(circle at 28% 35%, rgba(75, 188, 255, 0.18), transparent 32%),
@@ -433,19 +510,32 @@ h1 {
 .shared-game-info {
     position: relative;
     min-height: 120px;
-    padding: 1rem;
     display: flex;
     align-items: flex-end;
     overflow: hidden;
+    background: var(--panel-strong);
 }
 
-.shared-game-info::before {
+.shared-game-cover {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.shared-game-info::after {
     content: "";
     position: absolute;
     inset: 0;
-    background:
-        linear-gradient(180deg, transparent 12%, rgba(7, 17, 31, 0.96)),
-        var(--game-image) center / cover no-repeat;
+    background: linear-gradient(180deg, transparent 12%, rgba(7, 17, 31, 0.96));
+}
+
+.shared-game-copy {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    padding: 1rem;
 }
 
 .shared-game-info strong,
@@ -611,6 +701,72 @@ h1 {
     transform: translate3d(0, 0, 0) rotate(var(--rotation));
 }
 
+@keyframes portrait-enter-left {
+    0% {
+        transform: translateX(-108%) scale(1.04);
+    }
+
+    78% {
+        transform: translateX(2.5%) scale(1.01);
+    }
+
+    100% {
+        transform: translateX(0) scale(1);
+    }
+}
+
+@keyframes portrait-enter-right {
+    0% {
+        transform: translateX(108%) scale(1.04);
+    }
+
+    78% {
+        transform: translateX(-2.5%) scale(1.01);
+    }
+
+    100% {
+        transform: translateX(0) scale(1);
+    }
+}
+
+@keyframes versus-shake {
+    0%, 100% {
+        transform: translate3d(0, 0, 0);
+    }
+
+    18% {
+        transform: translate3d(-12px, 4px, 0);
+    }
+
+    36% {
+        transform: translate3d(10px, -5px, 0);
+    }
+
+    54% {
+        transform: translate3d(-7px, 3px, 0);
+    }
+
+    72% {
+        transform: translate3d(5px, -2px, 0);
+    }
+}
+
+@keyframes impact-burst {
+    0% {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.1);
+    }
+
+    20% {
+        opacity: 1;
+    }
+
+    100% {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(28);
+    }
+}
+
 @keyframes shimmer {
     to {
         background-position: -220% 0;
@@ -630,6 +786,19 @@ h1 {
 }
 
 @media (max-width: 900px) {
+    .portrait-panel {
+        width: 70%;
+        opacity: 0.58;
+    }
+
+    .portrait-panel-left {
+        clip-path: polygon(0 0, 92% 0, 72% 100%, 0 100%);
+    }
+
+    .portrait-panel-right {
+        clip-path: polygon(28% 0, 100% 0, 100% 100%, 8% 100%);
+    }
+
     .battle-grid {
         grid-template-columns: 1fr;
     }
@@ -658,6 +827,15 @@ h1 {
 }
 
 @media (max-width: 680px) {
+    .portrait-panel {
+        width: 78%;
+        opacity: 0.38;
+    }
+
+    .portrait-panel img {
+        object-position: center top;
+    }
+
     .hero {
         align-items: start;
         padding-top: 2.5rem;
@@ -703,4 +881,13 @@ h1 {
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
     }
+}
+
+.competition-note {
+    max-width: 760px;
+    margin: 0.8rem auto 0;
+    color: var(--muted);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    text-align: center;
 }
