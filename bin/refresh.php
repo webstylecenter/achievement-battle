@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-use AchievementBattle\BattleService;
+use AchievementBattle\IncrementalBattleService;
 
-/** @var BattleService $battle */
+/** @var IncrementalBattleService $battle */
 $battle = require dirname(__DIR__) . '/src/bootstrap.php';
 
 fwrite(STDOUT, "Refreshing Steam achievement battle data...\n");
@@ -41,6 +41,7 @@ if (is_array($players)) {
         $lifetimePerfectGames = is_int($player['lifetime_completed_games'] ?? null)
             ? $player['lifetime_completed_games']
             : 0;
+
         fwrite(
             STDOUT,
             sprintf(
@@ -52,23 +53,34 @@ if (is_array($players)) {
                 $lifetimePerfectGames,
             ),
         );
+    }
+}
 
-        $sync = $player['sync'] ?? null;
+$sync = $snapshot['sync'] ?? null;
 
-        if (!is_array($sync)) {
-            continue;
-        }
+if (is_array($sync)) {
+    $pending = is_int($sync['pending_games'] ?? null) ? $sync['pending_games'] : 0;
+    $missing = is_int($sync['missing_games'] ?? null) ? $sync['missing_games'] : 0;
+    $processed = is_int($sync['processed_this_run'] ?? null) ? $sync['processed_this_run'] : 0;
+    $cooldownUntil = is_int($sync['rate_limited_until'] ?? null) ? $sync['rate_limited_until'] : 0;
 
+    fwrite(
+        STDOUT,
+        sprintf(
+            "Sync progress: %d processed this run, %d pending, %d without initial data.\n",
+            $processed,
+            $pending,
+            $missing,
+        ),
+    );
+
+    if ($cooldownUntil > time()) {
         fwrite(
             STDOUT,
-            sprintf(
-                "  Sync: %d refreshed, %d exact-cache, %d stale-cache, %d games without achievements\n",
-                is_int($sync['refreshed_games'] ?? null) ? $sync['refreshed_games'] : 0,
-                is_int($sync['cached_games'] ?? null) ? $sync['cached_games'] : 0,
-                is_int($sync['stale_cache_games'] ?? null) ? $sync['stale_cache_games'] : 0,
-                is_int($sync['no_achievement_games'] ?? null) ? $sync['no_achievement_games'] : 0,
-            ),
+            sprintf("Steam rate limit cooldown until %s. Re-running before then keeps current progress.\n", gmdate(DATE_ATOM, $cooldownUntil)),
         );
+    } elseif ($pending > 0) {
+        fwrite(STDOUT, "Run this command again to continue from the remaining games.\n");
     }
 }
 
