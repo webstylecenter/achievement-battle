@@ -1,20 +1,33 @@
 'use strict';
 
+const battleHero = document.getElementById('battle-hero');
 const battleGrid = document.getElementById('battle-grid');
 const winnerBanner = document.getElementById('winner-banner');
 const snapshotTime = document.getElementById('snapshot-time');
+const competitionNote = document.getElementById('competition-note');
+const syncStatus = document.getElementById('sync-status');
 const statsGrid = document.getElementById('stats-grid');
 const recentGames = document.getElementById('recent-games');
 const sharedGames = document.getElementById('shared-games');
+const raritySection = document.getElementById('rarity-section');
 const rareAchievements = document.getElementById('rare-achievements');
 const excludedGames = document.getElementById('excluded-games');
 const confetti = document.getElementById('confetti');
+const leftPortrait = document.getElementById('left-portrait');
+const rightPortrait = document.getElementById('right-portrait');
+const gameFallbackImage = '/assets/game-fallback.svg';
 
 const numberFormatter = new Intl.NumberFormat('nl-NL');
 const dateFormatter = new Intl.DateTimeFormat('nl-NL', {
     dateStyle: 'medium',
     timeStyle: 'short',
 });
+const dayFormatter = new Intl.DateTimeFormat('nl-NL', {
+    dateStyle: 'medium',
+});
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+triggerVersusIntro();
 
 fetch('/api.php', { cache: 'no-store' })
     .then(async (response) => {
@@ -31,15 +44,40 @@ fetch('/api.php', { cache: 'no-store' })
         battleGrid.innerHTML = `<div class="error-card"><strong>Battle data is not ready.</strong><p>${escapeHtml(error.message)}</p></div>`;
     });
 
+function triggerVersusIntro() {
+    if (reducedMotion || battleHero === null) {
+        return;
+    }
+
+    window.setTimeout(() => {
+        battleHero.classList.add('impact');
+    }, 1050);
+
+    window.setTimeout(() => {
+        battleHero.classList.remove('impact');
+    }, 1550);
+}
+
 function renderBattle(data) {
     const players = data.players ?? [];
+    const competition = data.competition ?? {};
 
     if (players.length !== 2) {
         throw new Error('Expected exactly two players.');
     }
 
-    renderHero(players);
-    renderStats(players);
+    if (leftPortrait !== null && players[0].fighter_image) {
+        leftPortrait.src = players[0].fighter_image;
+    }
+
+    if (rightPortrait !== null && players[1].fighter_image) {
+        rightPortrait.src = players[1].fighter_image;
+    }
+
+    renderCompetitionNote(players, competition);
+    renderSyncStatus(data.sync ?? {});
+    renderHero(players, competition, data.sync ?? {});
+    renderStats(players, competition);
     renderRecent(players);
     renderShared(players, data.shared_games ?? []);
     renderRare(players);
@@ -50,8 +88,30 @@ function renderBattle(data) {
     }
 }
 
-function renderHero(players) {
+function renderCompetitionNote(players, competition) {
+    if (!competition.starts_at) {
+        competitionNote.textContent = 'Battle score counts all unlocked achievements.';
+        return;
+    }
+
+    const startDate = dayFormatter.format(new Date(competition.starts_at));
+    const source = players.find((player) => player.key === competition.source_player);
+    const stalePlayers = players.filter((player) => Number(player.sync?.stale_cache_games ?? 0) > 0);
+    let message = source
+        ? `Battle score counts achievements unlocked since ${startDate}, when ${source.name}'s Steam account was created.`
+        : `Battle score counts achievements unlocked since ${startDate}.`;
+
+    if (stalePlayers.length > 0) {
+        message += ` Steam temporarily failed for ${stalePlayers.map((player) => player.name).join(' & ')}; cached data was retained for a small number of games.`;
+    }
+
+    competitionNote.textContent = message;
+}
+
+function renderHero(players, competition, sync) {
     const maxAchievements = Math.max(...players.map((player) => player.achievement_count), 1);
+    const counterLabel = competition.starts_at ? 'achievements since battle start' : 'counted achievements';
+    const completedLabel = competition.starts_at ? 'perfect games since start' : 'perfect games';
 
     battleGrid.innerHTML = players.map((player, index) => `
         ${index === 1 ? '<div class="versus">VS</div>' : ''}
@@ -65,7 +125,7 @@ function renderHero(players) {
             </div>
             <div class="counter-wrap">
                 <span class="counter" data-target="${player.achievement_count}">0</span>
-                <div class="counter-label">counted achievements</div>
+                <div class="counter-label">${counterLabel}</div>
             </div>
             <div class="progress-track" aria-hidden="true">
                 <div class="progress-fill" data-width="${(player.achievement_count / maxAchievements) * 100}"></div>
@@ -73,7 +133,7 @@ function renderHero(players) {
             <div class="mini-stats">
                 <div class="mini-stat">
                     <strong>${numberFormatter.format(player.completed_games)}</strong>
-                    <span>perfect games</span>
+                    <span>${completedLabel}</span>
                 </div>
                 <div class="mini-stat">
                     <strong>${numberFormatter.format(player.hours_played)}h</strong>
@@ -83,44 +143,86 @@ function renderHero(players) {
         </article>
     `).join('');
 
-    const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 50 : 4200;
+    installImageFallbacks(battleGrid);
+
+    const duration = reducedMotion ? 50 : 4200;
+    const delay = reducedMotion ? 0 : 1150;
     const counters = [...document.querySelectorAll('.counter')];
     const fills = [...document.querySelectorAll('.progress-fill')];
 
-    fills.forEach((fill) => {
-        fill.animate(
-            [{ width: '0%' }, { width: `${fill.dataset.width}%` }],
-            { duration, easing: 'cubic-bezier(.42,0,.85,1)', fill: 'forwards' },
-        );
-    });
-
-    const startedAt = performance.now();
-
-    function tick(now) {
-        const rawProgress = Math.min((now - startedAt) / duration, 1);
-        const acceleratedProgress = rawProgress * rawProgress * rawProgress;
-
-        counters.forEach((counter) => {
-            const target = Number(counter.dataset.target);
-            counter.textContent = numberFormatter.format(Math.round(target * acceleratedProgress));
+    window.setTimeout(() => {
+        fills.forEach((fill) => {
+            fill.animate(
+                [{ width: '0%' }, { width: `${fill.dataset.width}%` }],
+                { duration, easing: 'cubic-bezier(.42,0,.85,1)', fill: 'forwards' },
+            );
         });
 
-        if (rawProgress < 1) {
-            requestAnimationFrame(tick);
-            return;
+        const startedAt = performance.now();
+
+        function tick(now) {
+            const rawProgress = Math.min((now - startedAt) / duration, 1);
+            const acceleratedProgress = rawProgress * rawProgress * rawProgress;
+
+            counters.forEach((counter) => {
+                const target = Number(counter.dataset.target);
+                counter.textContent = numberFormatter.format(Math.round(target * acceleratedProgress));
+            });
+
+            if (rawProgress < 1) {
+                requestAnimationFrame(tick);
+                return;
+            }
+
+            if (sync.initial_complete === false) {
+                const pendingGames = Number(sync.pending_games ?? 0);
+                winnerBanner.textContent = `Initial Steam sync in progress — ${numberFormatter.format(pendingGames)} game${pendingGames === 1 ? '' : 's'} remaining. Scores are provisional.`;
+                winnerBanner.hidden = false;
+                return;
+            }
+
+            revealWinner(players);
         }
 
-        revealWinner(players);
+        requestAnimationFrame(tick);
+    }, delay);
+}
+
+function renderSyncStatus(sync) {
+    if (syncStatus === null) {
+        return;
     }
 
-    requestAnimationFrame(tick);
+    const pendingGames = Number(sync.pending_games ?? 0);
+    const missingGames = Number(sync.missing_games ?? 0);
+    const rateLimitedUntil = Number(sync.rate_limited_until ?? 0);
+    const rateLimited = rateLimitedUntil > Math.floor(Date.now() / 1000);
+
+    if (sync.complete !== false && !rateLimited) {
+        syncStatus.hidden = true;
+        syncStatus.textContent = '';
+        return;
+    }
+
+    let message = sync.initial_complete === false
+        ? `Initial Steam sync: ${numberFormatter.format(missingGames)} games still need achievement data.`
+        : `${numberFormatter.format(pendingGames)} recently changed games are still being refreshed; cached values remain visible.`;
+
+    if (rateLimited) {
+        message += ` Steam rate limit reached; automatic requests are paused until ${dateFormatter.format(new Date(rateLimitedUntil * 1000))}.`;
+    } else if (pendingGames > 0) {
+        message += ' The next refresh continues from the remaining games instead of starting over.';
+    }
+
+    syncStatus.textContent = message;
+    syncStatus.hidden = false;
 }
 
 function revealWinner(players) {
     const [left, right] = players;
 
     if (left.achievement_count === right.achievement_count) {
-        winnerBanner.textContent = `Dead heat: both have ${numberFormatter.format(left.achievement_count)} achievements.`;
+        winnerBanner.textContent = `Dead heat: both have ${numberFormatter.format(left.achievement_count)} counted achievements.`;
         winnerBanner.hidden = false;
         return;
     }
@@ -132,7 +234,7 @@ function revealWinner(players) {
     winnerBanner.textContent = `${winner.name} leads by ${numberFormatter.format(lead)} achievements.`;
     winnerBanner.hidden = false;
 
-    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (!reducedMotion) {
         launchConfetti(winner.key);
     }
 }
@@ -159,14 +261,23 @@ function launchConfetti(winnerKey) {
     }, 5200);
 }
 
-function renderStats(players) {
+function renderStats(players, competition) {
     const [left, right] = players;
-    const metrics = [
-        ['Achievements', left.achievement_count, right.achievement_count, formatNumber],
-        ['Perfect games', left.completed_games, right.completed_games, formatNumber],
-        ['Games with achievements', left.games_with_achievements, right.games_with_achievements, formatNumber],
-        ['Included playtime', left.hours_played, right.hours_played, (value) => `${numberFormatter.format(value)}h`],
-    ];
+    const metrics = competition.starts_at
+        ? [
+            ['Achievements since start', left.achievement_count, right.achievement_count, formatNumber],
+            ['Perfect games since start', left.completed_games, right.completed_games, formatNumber],
+            ['Lifetime achievements after exclusions', left.lifetime_achievement_count, right.lifetime_achievement_count, formatNumber],
+            ['Lifetime perfect games', left.lifetime_completed_games, right.lifetime_completed_games, formatNumber],
+            ['Games with achievements', left.games_with_achievements, right.games_with_achievements, formatNumber],
+            ['Included playtime', left.hours_played, right.hours_played, (value) => `${numberFormatter.format(value)}h`],
+        ]
+        : [
+            ['Achievements', left.achievement_count, right.achievement_count, formatNumber],
+            ['Perfect games', left.completed_games, right.completed_games, formatNumber],
+            ['Games with achievements', left.games_with_achievements, right.games_with_achievements, formatNumber],
+            ['Included playtime', left.hours_played, right.hours_played, (value) => `${numberFormatter.format(value)}h`],
+        ];
 
     statsGrid.innerHTML = metrics.map(([label, leftValue, rightValue, formatter]) => `
         <article class="stat-card">
@@ -191,7 +302,7 @@ function renderRecent(players) {
             <div class="game-cards">
                 ${(player.recent_games ?? []).map((game) => `
                     <div class="game-card">
-                        <img src="${escapeAttribute(game.image)}" data-fallback="${escapeAttribute(game.icon)}" alt="" loading="lazy">
+                        <img src="${escapeAttribute(game.image)}" data-fallback="${escapeAttribute(game.icon)}" data-final-fallback="${gameFallbackImage}" alt="" loading="lazy">
                         <div class="game-card-body">
                             <strong>${escapeHtml(game.name)}</strong>
                             <span>${numberFormatter.format(game.hours)} hours total</span>
@@ -209,20 +320,24 @@ function renderShared(players, games) {
     const [left, right] = players;
 
     if (games.length === 0) {
-        sharedGames.innerHTML = '<div class="config-note">No shared games with achievement data were found.</div>';
+        sharedGames.innerHTML = '<div class="config-note">No unfinished games that both players have played were found.</div>';
         return;
     }
 
     sharedGames.innerHTML = games.map((game) => {
         const leftStats = game.players[left.key];
         const rightStats = game.players[right.key];
+        const lastPlayed = game.last_played > 0
+            ? `Last activity ${dayFormatter.format(new Date(game.last_played * 1000))}`
+            : 'No recent activity date';
 
         return `
             <article class="shared-row">
-                <div class="shared-game-info" style="--game-image: url('${escapeCssUrl(game.image)}')">
-                    <div>
+                <div class="shared-game-info">
+                    <img class="shared-game-cover" src="${escapeAttribute(game.image)}" data-fallback="${escapeAttribute(game.icon)}" data-final-fallback="${gameFallbackImage}" alt="" loading="lazy">
+                    <div class="shared-game-copy">
                         <strong>${escapeHtml(game.name)}</strong>
-                        <span>${numberFormatter.format(game.achievement_total)} achievements</span>
+                        <span>${numberFormatter.format(game.achievement_total)} achievements · ${lastPlayed}</span>
                     </div>
                 </div>
                 ${sharedPlayer(left, leftStats, game.winner === left.key, game.achievement_total)}
@@ -230,6 +345,8 @@ function renderShared(players, games) {
             </article>
         `;
     }).join('');
+
+    installImageFallbacks(sharedGames);
 }
 
 function sharedPlayer(player, stats, isWinner, total) {
@@ -246,23 +363,33 @@ function sharedPlayer(player, stats, isWinner, total) {
 }
 
 function renderRare(players) {
+    const hasRarityData = players.some((player) => (player.rare_achievements ?? []).length > 0);
+
+    if (!hasRarityData) {
+        raritySection.hidden = true;
+        return;
+    }
+
+    raritySection.hidden = false;
     rareAchievements.innerHTML = players.map((player) => `
         <article class="rare-column">
             <h3 class="panel-title">${escapeHtml(player.name)}</h3>
             <div class="rare-list">
                 ${(player.rare_achievements ?? []).map((achievement) => `
                     <div class="rare-item">
-                        <img src="${escapeAttribute(achievement.game_image)}" alt="" loading="lazy">
+                        <img src="${escapeAttribute(achievement.game_image)}" data-final-fallback="${gameFallbackImage}" alt="" loading="lazy">
                         <div>
                             <strong>${escapeHtml(achievement.name)}</strong>
                             <span>${escapeHtml(achievement.game_name)}</span>
                         </div>
-                        <div class="rarity-percent">${Number(achievement.percentage).toFixed(2)}%</div>
+                        <div class="rarity-percent">${Number(achievement.percentage).toFixed(1)}%</div>
                     </div>
-                `).join('') || '<p>No rarity data available.</p>'}
+                `).join('') || '<p>No rarity data available for this player.</p>'}
             </div>
         </article>
     `).join('');
+
+    installImageFallbacks(rareAchievements);
 }
 
 function renderExcluded(games) {
@@ -277,12 +404,23 @@ function renderExcluded(games) {
 }
 
 function installImageFallbacks(container) {
-    container.querySelectorAll('img[data-fallback]').forEach((image) => {
+    container.querySelectorAll('img[data-fallback], img[data-final-fallback]').forEach((image) => {
         image.addEventListener('error', () => {
-            if (image.dataset.fallback && image.src !== image.dataset.fallback) {
-                image.src = image.dataset.fallback;
+            const fallback = image.dataset.fallback ?? '';
+            const finalFallback = image.dataset.finalFallback ?? gameFallbackImage;
+
+            if (image.dataset.fallbackAttempted !== 'true' && fallback !== '') {
+                image.dataset.fallbackAttempted = 'true';
+                image.src = fallback;
+                return;
             }
-        }, { once: true });
+
+            const finalUrl = new URL(finalFallback, document.baseURI).href;
+
+            if (image.src !== finalUrl) {
+                image.src = finalFallback;
+            }
+        });
     });
 }
 
@@ -301,8 +439,4 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
     return escapeHtml(value);
-}
-
-function escapeCssUrl(value) {
-    return String(value).replaceAll("'", '%27').replaceAll(')', '%29');
 }

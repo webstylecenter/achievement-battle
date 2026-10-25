@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-use AchievementBattle\BattleService;
+use AchievementBattle\IncrementalBattleService;
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 
 try {
-    /** @var BattleService $battle */
+    /** @var IncrementalBattleService $battle */
     $battle = require dirname(__DIR__) . '/src/bootstrap.php';
     $snapshot = $battle->cachedSnapshot();
 
