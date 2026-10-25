@@ -81,6 +81,26 @@ if (is_array($sync)) {
         ),
     );
 
+    $unavailableItems = $sync['unavailable_items'] ?? [];
+
+    if (is_array($unavailableItems) && $unavailableItems !== []) {
+        $names = [];
+
+        foreach ($unavailableItems as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $name = is_string($item['name'] ?? null) ? $item['name'] : 'Unknown game';
+            $appId = is_int($item['app_id'] ?? null) ? $item['app_id'] : 0;
+            $names[] = sprintf('%s (%d)', $name, $appId);
+        }
+
+        if ($names !== []) {
+            fwrite(STDOUT, sprintf("Temporarily unavailable: %s\n", implode(', ', $names)));
+        }
+    }
+
     if ($cooldownUntil > time()) {
         fwrite(
             STDOUT,
