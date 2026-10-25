@@ -399,8 +399,8 @@ function renderExcluded(games) {
     }
 
     excludedGames.innerHTML = `<strong>Excluded from every battle statistic:</strong> ${games
-        .map((game) => `${escapeHtml(game.name)} (AppID ${game.app_id})`)
-        .join(', ')}. Edit <code>config/config.php</code> to change this list, then refresh the snapshot.`;
+        .map((game) => `${escapeHtml(game.name)}`)
+        .join(', ')}. `;
 }
 
 function installImageFallbacks(container) {

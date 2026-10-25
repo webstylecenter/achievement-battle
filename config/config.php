@@ -32,8 +32,8 @@ return [
     // - date: use the explicit YYYY-MM-DD date below.
     // - all_time: count every unlocked achievement.
     'achievement_start' => [
-        'mode' => 'player_created',
-        'player_key' => 'florian',
+        'mode' => 'all_time',
+        'player_key' => null,
         'date' => null,
     ],
 
