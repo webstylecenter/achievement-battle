@@ -2,14 +2,20 @@
 
 declare(strict_types=1);
 
+use AchievementBattle\AppConfig;
 use AchievementBattle\IncrementalBattleService;
+use AchievementBattle\WeeklyBattleService;
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 
 try {
+    $rootDirectory = dirname(__DIR__);
+
     /** @var IncrementalBattleService $battle */
-    $battle = require dirname(__DIR__) . '/src/bootstrap.php';
+    $battle = require $rootDirectory . '/src/bootstrap.php';
+    require_once $rootDirectory . '/src/WeeklyBattleService.php';
+
     $snapshot = $battle->cachedSnapshot();
 
     if ($snapshot === null) {
@@ -20,6 +26,9 @@ try {
         ], JSON_THROW_ON_ERROR);
         exit;
     }
+
+    $weeklyBattle = new WeeklyBattleService(new AppConfig($rootDirectory));
+    $snapshot = $weeklyBattle->enrich($snapshot);
 
     echo json_encode($snapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
 } catch (Throwable $exception) {
