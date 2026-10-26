@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://cdn.akamai.steamstatic.com">
     <link rel="preconnect" href="https://avatars.fastly.steamstatic.com">
     <link rel="stylesheet" href="/assets/app.css">
+    <link rel="stylesheet" href="/assets/weekly-battle.css">
 </head>
 <body>
     <main>
@@ -37,6 +38,38 @@
                         <div class="fighter-skeleton"></div>
                     </article>
                 </div>
+
+                <section class="weekly-battle" id="weekly-battle" aria-labelledby="weekly-title" hidden>
+                    <div class="weekly-battle-heading">
+                        <div>
+                            <span class="weekly-kicker">Weekly showdown</span>
+                            <h2 id="weekly-title">Achievements this week</h2>
+                        </div>
+                        <span class="weekly-range" id="weekly-range"></span>
+                    </div>
+
+                    <div class="weekly-battle-row">
+                        <div class="weekly-score weekly-score-left">
+                            <span class="weekly-player" id="weekly-left-name">Peter</span>
+                            <strong id="weekly-left-count">0</strong>
+                        </div>
+
+                        <div class="weekly-track" aria-hidden="true">
+                            <div class="weekly-fill weekly-fill-left" id="weekly-left-fill"></div>
+                            <div class="weekly-fill weekly-fill-right" id="weekly-right-fill"></div>
+                            <div class="weekly-clash">
+                                <span>VS</span>
+                            </div>
+                        </div>
+
+                        <div class="weekly-score weekly-score-right">
+                            <span class="weekly-player" id="weekly-right-name">Florian</span>
+                            <strong id="weekly-right-count">0</strong>
+                        </div>
+                    </div>
+
+                    <p class="weekly-result" id="weekly-result"></p>
+                </section>
 
                 <div class="winner-banner" id="winner-banner" hidden></div>
                 <p class="snapshot-time" id="snapshot-time"></p>
