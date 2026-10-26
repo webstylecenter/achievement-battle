@@ -11,12 +11,15 @@ use JsonException;
 final class WeeklyBattleService
 {
     private const TIMEZONE = 'Europe/Amsterdam';
+    private const CACHE_KEY = 'weekly-battle-summary';
 
     private readonly DateTimeZone $timezone;
+    private readonly CacheRepository $cache;
 
     public function __construct(private readonly AppConfig $config)
     {
         $this->timezone = new DateTimeZone(self::TIMEZONE);
+        $this->cache = new CacheRepository($config->rootDirectory() . '/var/cache');
     }
 
     /**
@@ -26,6 +29,7 @@ final class WeeklyBattleService
     public function enrich(array $snapshot): array
     {
         $window = $this->weekWindow();
+        $counts = $this->weeklyCounts($snapshot, $window);
         $players = $snapshot['players'] ?? null;
 
         if (is_array($players)) {
@@ -40,11 +44,7 @@ final class WeeklyBattleService
                     continue;
                 }
 
-                $player['weekly_achievement_count'] = $this->countAchievements(
-                    $playerKey,
-                    $window['start_timestamp'],
-                    $window['end_timestamp'],
-                );
+                $player['weekly_achievement_count'] = $counts[$playerKey] ?? 0;
                 $players[$index] = $player;
             }
 
@@ -58,6 +58,50 @@ final class WeeklyBattleService
         ];
 
         return $snapshot;
+    }
+
+    /**
+     * @param array<string, mixed> $snapshot
+     * @param array{start_timestamp: int, end_timestamp: int, starts_at: string, ends_at: string} $window
+     * @return array<string, int>
+     */
+    private function weeklyCounts(array $snapshot, array $window): array
+    {
+        $signature = $this->sourceSignature($window['start_timestamp']);
+        $cached = $this->cache->read(self::CACHE_KEY);
+        $cachedCounts = is_array($cached['counts'] ?? null) ? $cached['counts'] : null;
+
+        if (($cached['signature'] ?? null) === $signature && is_array($cachedCounts)) {
+            return $this->normalizeCounts($cachedCounts);
+        }
+
+        $players = is_array($snapshot['players'] ?? null) ? $snapshot['players'] : [];
+        $counts = [];
+
+        foreach ($players as $player) {
+            if (!is_array($player)) {
+                continue;
+            }
+
+            $playerKey = $player['key'] ?? null;
+
+            if (!is_string($playerKey) || $playerKey === '') {
+                continue;
+            }
+
+            $counts[$playerKey] = $this->countAchievements(
+                $playerKey,
+                $window['start_timestamp'],
+                $window['end_timestamp'],
+            );
+        }
+
+        $this->cache->write(self::CACHE_KEY, [
+            'signature' => $signature,
+            'counts' => $counts,
+        ]);
+
+        return $counts;
     }
 
     /**
@@ -75,6 +119,34 @@ final class WeeklyBattleService
             'starts_at' => $start->format(DATE_ATOM),
             'ends_at' => $end->format(DATE_ATOM),
         ];
+    }
+
+    private function sourceSignature(int $weekStartTimestamp): string
+    {
+        $files = glob($this->config->rootDirectory() . '/var/cache/achievements-*.json', GLOB_NOSORT);
+        $parts = [
+            (string) $weekStartTimestamp,
+            implode(',', array_keys($this->config->excludedAppIds())),
+        ];
+
+        if ($files === false) {
+            return hash('sha256', implode('|', $parts));
+        }
+
+        sort($files, SORT_STRING);
+
+        foreach ($files as $file) {
+            $modifiedAt = filemtime($file);
+            $size = filesize($file);
+            $parts[] = sprintf(
+                '%s:%d:%d',
+                basename($file),
+                $modifiedAt === false ? 0 : $modifiedAt,
+                $size === false ? 0 : $size,
+            );
+        }
+
+        return hash('sha256', implode('|', $parts));
     }
 
     private function countAchievements(string $playerKey, int $startTimestamp, int $endTimestamp): int
@@ -165,5 +237,22 @@ final class WeeklyBattleService
         }
 
         return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * @param array<mixed> $counts
+     * @return array<string, int>
+     */
+    private function normalizeCounts(array $counts): array
+    {
+        $normalized = [];
+
+        foreach ($counts as $playerKey => $count) {
+            if (is_string($playerKey) && is_int($count)) {
+                $normalized[$playerKey] = $count;
+            }
+        }
+
+        return $normalized;
     }
 }
