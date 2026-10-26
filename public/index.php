@@ -124,5 +124,6 @@
     </main>
 
     <script src="/assets/app.js" defer></script>
+    <script src="/assets/weekly-battle.js" defer></script>
 </body>
 </html>
