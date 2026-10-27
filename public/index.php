@@ -112,13 +112,6 @@
         </section>
 
         <section class="section section-compact">
-            <details class="config-note sync-details" id="sync-details" hidden>
-                <summary>Sync details</summary>
-                <p id="sync-status"></p>
-            </details>
-        </section>
-
-        <section class="section section-compact">
             <div class="config-note" id="excluded-games"></div>
         </section>
     </main>
