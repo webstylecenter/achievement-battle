@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use AchievementBattle\AppConfig;
-use AchievementBattle\IncrementalBattleService;
+use AchievementBattle\BattleApplicationService;
 use AchievementBattle\WeeklyBattleService;
 
 header('Content-Type: application/json; charset=utf-8');
@@ -12,7 +12,7 @@ header('Cache-Control: no-store');
 try {
     $rootDirectory = dirname(__DIR__);
 
-    /** @var IncrementalBattleService $battle */
+    /** @var BattleApplicationService $battle */
     $battle = require $rootDirectory . '/src/bootstrap.php';
     require_once $rootDirectory . '/src/WeeklyBattleService.php';
 
