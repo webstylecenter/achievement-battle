@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-use AchievementBattle\IncrementalBattleService;
+use AchievementBattle\BattleApplicationService;
 
-/** @var IncrementalBattleService $battle */
+/** @var BattleApplicationService $battle */
 $battle = require dirname(__DIR__) . '/src/bootstrap.php';
 
 fwrite(STDOUT, "Refreshing Steam achievement battle data...\n");
@@ -41,16 +41,21 @@ if (is_array($players)) {
         $lifetimePerfectGames = is_int($player['lifetime_completed_games'] ?? null)
             ? $player['lifetime_completed_games']
             : 0;
+        $historicalCacheGames = is_int($player['historical_cache_games'] ?? null)
+            ? $player['historical_cache_games']
+            : 0;
 
         fwrite(
             STDOUT,
             sprintf(
-                "- %s: %d battle achievements, %d lifetime after exclusions; %d/%d perfect games\n",
+                "- %s: %d battle achievements, %d lifetime after exclusions; %d/%d perfect games; "
+                . "%d cached historical games\n",
                 $name,
                 $battleCount,
                 $lifetimeCount,
                 $perfectGames,
                 $lifetimePerfectGames,
+                $historicalCacheGames,
             ),
         );
     }
