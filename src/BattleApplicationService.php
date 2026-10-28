@@ -20,7 +20,11 @@ final class BattleApplicationService
     {
         $snapshot = $this->battle->cachedSnapshot();
 
-        return $snapshot === null ? null : $this->historical->enrich($snapshot);
+        if ($snapshot === null || $this->hasHistoricalTotals($snapshot)) {
+            return $snapshot;
+        }
+
+        return $this->historical->enrich($snapshot);
     }
 
     /** @return array<string, mixed> */
@@ -30,5 +34,23 @@ final class BattleApplicationService
         $this->cache->write(self::SNAPSHOT_KEY, $snapshot);
 
         return $snapshot;
+    }
+
+    /** @param array<string, mixed> $snapshot */
+    private function hasHistoricalTotals(array $snapshot): bool
+    {
+        $players = $snapshot['players'] ?? null;
+
+        if (!is_array($players) || count($players) !== 2) {
+            return false;
+        }
+
+        foreach ($players as $player) {
+            if (!is_array($player) || !is_int($player['historical_cache_games'] ?? null)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
