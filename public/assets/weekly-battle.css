@@ -11,6 +11,14 @@
     backdrop-filter: blur(12px);
 }
 
+.monthly-battle {
+    margin-top: 0.75rem;
+}
+
+.monthly-battle .weekly-kicker {
+    color: #b0c5ff;
+}
+
 .weekly-battle::before {
     position: absolute;
     inset: 0;
