@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://cdn.akamai.steamstatic.com">
     <link rel="preconnect" href="https://avatars.fastly.steamstatic.com">
     <link rel="stylesheet" href="/assets/app.css">
-    <link rel="stylesheet" href="/assets/weekly-battle.css">
+    <link rel="stylesheet" href="/assets/monthly-battle.css">
 </head>
 <body>
     <main>
@@ -39,69 +39,36 @@
                     </article>
                 </div>
 
-                <section class="weekly-battle" id="weekly-battle" aria-labelledby="weekly-title" hidden>
-                    <div class="weekly-battle-heading">
+                <section class="monthly-battle" id="monthly-battle" aria-labelledby="monthly-title" hidden>
+                    <div class="monthly-battle-heading">
                         <div>
-                            <span class="weekly-kicker">Weekly showdown</span>
-                            <h2 id="weekly-title">Achievements this week</h2>
-                        </div>
-                        <span class="weekly-range" id="weekly-range"></span>
-                    </div>
-
-                    <div class="weekly-battle-row">
-                        <div class="weekly-score weekly-score-left">
-                            <span class="weekly-player" id="weekly-left-name">Peter</span>
-                            <strong id="weekly-left-count">0</strong>
-                        </div>
-
-                        <button type="button" class="weekly-track period-history-toggle" id="weekly-history-toggle" aria-label="Show previous weeks" aria-controls="weekly-history" aria-expanded="false">
-                            <div class="weekly-fill weekly-fill-left" id="weekly-left-fill"></div>
-                            <div class="weekly-fill weekly-fill-right" id="weekly-right-fill"></div>
-                            <div class="weekly-clash">
-                                <span>VS</span>
-                            </div>
-                        </button>
-
-                        <div class="weekly-score weekly-score-right">
-                            <span class="weekly-player" id="weekly-right-name">Florian</span>
-                            <strong id="weekly-right-count">0</strong>
-                        </div>
-                    </div>
-
-                    <p class="weekly-result" id="weekly-result"></p>
-                    <div class="period-history" id="weekly-history" hidden></div>
-                </section>
-
-                <section class="weekly-battle monthly-battle" id="monthly-battle" aria-labelledby="monthly-title" hidden>
-                    <div class="weekly-battle-heading">
-                        <div>
-                            <span class="weekly-kicker">Monthly showdown</span>
+                            <span class="monthly-kicker">Monthly showdown</span>
                             <h2 id="monthly-title">Achievements this month</h2>
                         </div>
-                        <span class="weekly-range" id="monthly-range"></span>
+                        <span class="monthly-range" id="monthly-range"></span>
                     </div>
 
-                    <div class="weekly-battle-row">
-                        <div class="weekly-score weekly-score-left">
-                            <span class="weekly-player" id="monthly-left-name">Peter</span>
+                    <div class="monthly-battle-row">
+                        <div class="monthly-score monthly-score-left">
+                            <span class="monthly-player" id="monthly-left-name">Peter</span>
                             <strong id="monthly-left-count">0</strong>
                         </div>
 
-                        <button type="button" class="weekly-track period-history-toggle" id="monthly-history-toggle" aria-label="Show previous months" aria-controls="monthly-history" aria-expanded="false">
-                            <div class="weekly-fill weekly-fill-left" id="monthly-left-fill"></div>
-                            <div class="weekly-fill weekly-fill-right" id="monthly-right-fill"></div>
-                            <div class="weekly-clash">
+                        <button type="button" class="monthly-track period-history-toggle" id="monthly-history-toggle" aria-label="Show previous months" aria-controls="monthly-history" aria-expanded="false">
+                            <div class="monthly-fill monthly-fill-left" id="monthly-left-fill"></div>
+                            <div class="monthly-fill monthly-fill-right" id="monthly-right-fill"></div>
+                            <div class="monthly-clash">
                                 <span>VS</span>
                             </div>
                         </button>
 
-                        <div class="weekly-score weekly-score-right">
-                            <span class="weekly-player" id="monthly-right-name">Florian</span>
+                        <div class="monthly-score monthly-score-right">
+                            <span class="monthly-player" id="monthly-right-name">Florian</span>
                             <strong id="monthly-right-count">0</strong>
                         </div>
                     </div>
 
-                    <p class="weekly-result" id="monthly-result"></p>
+                    <p class="monthly-result" id="monthly-result"></p>
                     <div class="period-history" id="monthly-history" hidden></div>
                 </section>
 
