@@ -71,6 +71,38 @@
                     <p class="weekly-result" id="weekly-result"></p>
                 </section>
 
+                <section class="weekly-battle monthly-battle" id="monthly-battle" aria-labelledby="monthly-title" hidden>
+                    <div class="weekly-battle-heading">
+                        <div>
+                            <span class="weekly-kicker">Monthly showdown</span>
+                            <h2 id="monthly-title">Achievements this month</h2>
+                        </div>
+                        <span class="weekly-range" id="monthly-range"></span>
+                    </div>
+
+                    <div class="weekly-battle-row">
+                        <div class="weekly-score weekly-score-left">
+                            <span class="weekly-player" id="monthly-left-name">Peter</span>
+                            <strong id="monthly-left-count">0</strong>
+                        </div>
+
+                        <div class="weekly-track" aria-hidden="true">
+                            <div class="weekly-fill weekly-fill-left" id="monthly-left-fill"></div>
+                            <div class="weekly-fill weekly-fill-right" id="monthly-right-fill"></div>
+                            <div class="weekly-clash">
+                                <span>VS</span>
+                            </div>
+                        </div>
+
+                        <div class="weekly-score weekly-score-right">
+                            <span class="weekly-player" id="monthly-right-name">Florian</span>
+                            <strong id="monthly-right-count">0</strong>
+                        </div>
+                    </div>
+
+                    <p class="weekly-result" id="monthly-result"></p>
+                </section>
+
                 <div class="winner-banner" id="winner-banner" hidden></div>
                 <p class="snapshot-time" id="snapshot-time"></p>
                 <a class="scroll-cue" href="#comparison">Scroll for the damage report <span>↓</span></a>
