@@ -25,10 +25,6 @@ const dateFormatter = new Intl.DateTimeFormat('nl-NL', {
 const dayFormatter = new Intl.DateTimeFormat('nl-NL', {
     dateStyle: 'medium',
 });
-const historyDateFormatter = new Intl.DateTimeFormat('nl-NL', {
-    dateStyle: 'medium',
-    timeZone: 'Europe/Amsterdam',
-});
 const historyMonthFormatter = new Intl.DateTimeFormat('nl-NL', {
     month: 'long',
     year: 'numeric',
@@ -85,10 +81,8 @@ function renderBattle(data) {
 
     renderCompetitionNote(players, competition);
     renderHero(players, competition, data.sync ?? {});
-    renderPeriodBattle(players, data.weekly_competition ?? {}, data.sync ?? {}, 'weekly');
-    renderPeriodBattle(players, data.monthly_competition ?? {}, data.sync ?? {}, 'monthly');
-    renderPeriodHistory('weekly', data.weekly_history ?? [], players);
-    renderPeriodHistory('monthly', data.monthly_history ?? [], players);
+    renderMonthlyBattle(players, data.monthly_competition ?? {}, data.sync ?? {});
+    renderMonthlyHistory(data.monthly_history ?? [], players);
     renderStats(players, competition);
     renderRecent(players);
     renderShared(players, data.shared_games ?? []);
@@ -191,16 +185,16 @@ function renderHero(players, competition, sync) {
     }, delay);
 }
 
-function renderPeriodBattle(players, competition, sync, period) {
-    const battle = document.getElementById(`${period}-battle`);
-    const range = document.getElementById(`${period}-range`);
-    const leftName = document.getElementById(`${period}-left-name`);
-    const rightName = document.getElementById(`${period}-right-name`);
-    const leftCount = document.getElementById(`${period}-left-count`);
-    const rightCount = document.getElementById(`${period}-right-count`);
-    const leftFill = document.getElementById(`${period}-left-fill`);
-    const rightFill = document.getElementById(`${period}-right-fill`);
-    const result = document.getElementById(`${period}-result`);
+function renderMonthlyBattle(players, competition, sync) {
+    const battle = document.getElementById('monthly-battle');
+    const range = document.getElementById('monthly-range');
+    const leftName = document.getElementById('monthly-left-name');
+    const rightName = document.getElementById('monthly-right-name');
+    const leftCount = document.getElementById('monthly-left-count');
+    const rightCount = document.getElementById('monthly-right-count');
+    const leftFill = document.getElementById('monthly-left-fill');
+    const rightFill = document.getElementById('monthly-right-fill');
+    const result = document.getElementById('monthly-result');
 
     if (
         battle === null
@@ -222,8 +216,8 @@ function renderPeriodBattle(players, competition, sync, period) {
     }
 
     const [left, right] = players;
-    const leftTarget = Number(left[`${period}_achievement_count`] ?? 0);
-    const rightTarget = Number(right[`${period}_achievement_count`] ?? 0);
+    const leftTarget = Number(left.monthly_achievement_count ?? 0);
+    const rightTarget = Number(right.monthly_achievement_count ?? 0);
     const leftTargetPercent = battleLeftPercentage(leftTarget, rightTarget);
 
     leftName.textContent = left.name;
@@ -234,9 +228,7 @@ function renderPeriodBattle(players, competition, sync, period) {
     rightFill.style.width = '50%';
     result.textContent = '';
 
-    const resetTime = period === 'weekly'
-        ? 'Monday 00:00 NL'
-        : 'the 1st of the month at 00:00 NL';
+    const resetTime = 'the 1st of the month at 00:00 NL';
 
     if (competition.starts_at && competition.ends_at) {
         range.textContent = `${dayFormatter.format(new Date(competition.starts_at))} – ${dayFormatter.format(new Date(competition.ends_at))}`;
@@ -267,7 +259,7 @@ function renderPeriodBattle(players, competition, sync, period) {
                 return;
             }
 
-            result.textContent = periodResultText(left, right, leftTarget, rightTarget, period, resetTime);
+            result.textContent = monthlyResultText(left, right, leftTarget, rightTarget);
         }
 
         requestAnimationFrame(tick);
@@ -284,33 +276,32 @@ function battleLeftPercentage(leftScore, rightScore) {
     return Math.min(85, Math.max(15, proportional));
 }
 
-function periodResultText(left, right, leftScore, rightScore, period, resetTime) {
-    const label = period === 'weekly' ? 'this week' : 'this month';
+function monthlyResultText(left, right, leftScore, rightScore) {
+    const resetTime = 'the 1st of the month at 00:00 NL';
 
     if (leftScore === 0 && rightScore === 0) {
-        return `No achievements unlocked yet ${label} · resets ${resetTime}`;
+        return `No achievements unlocked yet this month · resets ${resetTime}`;
     }
 
     if (leftScore === rightScore) {
-        return `${period === 'weekly' ? 'Weekly' : 'Monthly'} battle is tied at ${numberFormatter.format(leftScore)} · resets ${resetTime}`;
+        return `Monthly battle is tied at ${numberFormatter.format(leftScore)} · resets ${resetTime}`;
     }
 
     const winner = leftScore > rightScore ? left : right;
     const lead = Math.abs(leftScore - rightScore);
 
-    return `${winner.name} leads ${label} by ${numberFormatter.format(lead)} achievement${lead === 1 ? '' : 's'} · resets ${resetTime}`;
+    return `${winner.name} leads this month by ${numberFormatter.format(lead)} achievement${lead === 1 ? '' : 's'} · resets ${resetTime}`;
 }
 
-function renderPeriodHistory(period, rows, players) {
-    const toggle = document.getElementById(`${period}-history-toggle`);
-    const container = document.getElementById(`${period}-history`);
+function renderMonthlyHistory(rows, players) {
+    const toggle = document.getElementById('monthly-history-toggle');
+    const container = document.getElementById('monthly-history');
 
     if (toggle === null || container === null || players.length !== 2) {
         return;
     }
 
     const [left, right] = players;
-    const periods = period === 'weekly' ? 'weeks' : 'months';
     const history = Array.isArray(rows) ? rows : [];
     const validRows = history.filter((row) => (
         row !== null
@@ -323,7 +314,7 @@ function renderPeriodHistory(period, rows, players) {
 
     container.innerHTML = `
         <div class="period-history-heading">
-            <strong>Previous ${periods}</strong>
+            <strong>Previous months</strong>
             <span>${escapeHtml(left.name)} / ${escapeHtml(right.name)}</span>
         </div>
         <div class="period-history-list">
@@ -337,9 +328,7 @@ function renderPeriodHistory(period, rows, players) {
                     return '';
                 }
 
-                const label = period === 'monthly'
-                    ? historyMonthFormatter.format(start)
-                    : `${historyDateFormatter.format(start)} – ${historyDateFormatter.format(new Date(end.getTime() - 1))}`;
+                const label = historyMonthFormatter.format(start);
                 const leftPercent = battleLeftPercentage(leftScore, rightScore);
 
                 return `
@@ -355,19 +344,19 @@ function renderPeriodHistory(period, rows, players) {
                         </div>
                     </div>
                 `;
-            }).join('') || `<p class="period-history-empty">No previous ${periods} available yet.</p>`}
+            }).join('') || '<p class="period-history-empty">No previous months available yet.</p>'}
         </div>
     `;
 
     container.hidden = true;
     toggle.setAttribute('aria-expanded', 'false');
-    toggle.setAttribute('aria-label', `Show previous ${periods}`);
+    toggle.setAttribute('aria-label', 'Show previous months');
 
     toggle.addEventListener('click', () => {
         const expanded = toggle.getAttribute('aria-expanded') === 'true';
         container.hidden = expanded;
         toggle.setAttribute('aria-expanded', String(!expanded));
-        toggle.setAttribute('aria-label', `${expanded ? 'Show' : 'Hide'} previous ${periods}`);
+        toggle.setAttribute('aria-label', `${expanded ? 'Show' : 'Hide'} previous months`);
     });
 }
 

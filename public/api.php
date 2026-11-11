@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 use AchievementBattle\AppConfig;
 use AchievementBattle\BattleApplicationService;
-use AchievementBattle\WeeklyBattleService;
+use AchievementBattle\MonthlyBattleService;
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -14,7 +14,7 @@ try {
 
     /** @var BattleApplicationService $battle */
     $battle = require $rootDirectory . '/src/bootstrap.php';
-    require_once $rootDirectory . '/src/WeeklyBattleService.php';
+    require_once $rootDirectory . '/src/MonthlyBattleService.php';
 
     $snapshot = $battle->cachedSnapshot();
 
@@ -27,8 +27,8 @@ try {
         exit;
     }
 
-    $weeklyBattle = new WeeklyBattleService(new AppConfig($rootDirectory));
-    $snapshot = $weeklyBattle->enrich($snapshot);
+    $monthlyBattle = new MonthlyBattleService(new AppConfig($rootDirectory));
+    $snapshot = $monthlyBattle->enrich($snapshot);
 
     echo json_encode($snapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
 } catch (Throwable $exception) {

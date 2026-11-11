@@ -1,4 +1,4 @@
-.weekly-battle {
+.monthly-battle {
     position: relative;
     width: 100%;
     margin: 1.4rem auto 1rem;
@@ -11,15 +11,11 @@
     backdrop-filter: blur(12px);
 }
 
-.monthly-battle {
-    margin-top: 0.75rem;
-}
-
-.monthly-battle .weekly-kicker {
+.monthly-battle .monthly-kicker {
     color: #b0c5ff;
 }
 
-.weekly-battle::before {
+.monthly-battle::before {
     position: absolute;
     inset: 0;
     background:
@@ -29,14 +25,14 @@
     pointer-events: none;
 }
 
-.weekly-battle-heading,
-.weekly-battle-row,
-.weekly-result {
+.monthly-battle-heading,
+.monthly-battle-row,
+.monthly-result {
     position: relative;
     z-index: 1;
 }
 
-.weekly-battle-heading {
+.monthly-battle-heading {
     display: flex;
     align-items: flex-end;
     justify-content: space-between;
@@ -44,7 +40,7 @@
     margin-bottom: 1rem;
 }
 
-.weekly-kicker {
+.monthly-kicker {
     display: block;
     margin-bottom: 0.2rem;
     color: var(--gold);
@@ -54,40 +50,40 @@
     text-transform: uppercase;
 }
 
-.weekly-battle-heading h2 {
+.monthly-battle-heading h2 {
     margin: 0;
     font-size: clamp(1.05rem, 2vw, 1.35rem);
     letter-spacing: -0.025em;
 }
 
-.weekly-range {
+.monthly-range {
     color: var(--muted);
     font-size: 0.78rem;
     text-align: right;
 }
 
-.weekly-battle-row {
+.monthly-battle-row {
     display: grid;
     grid-template-columns: minmax(88px, 120px) minmax(240px, 1fr) minmax(88px, 120px);
     align-items: center;
     gap: 1rem;
 }
 
-.weekly-score {
+.monthly-score {
     display: flex;
     flex-direction: column;
     gap: 0.15rem;
 }
 
-.weekly-score-left {
+.monthly-score-left {
     align-items: flex-start;
 }
 
-.weekly-score-right {
+.monthly-score-right {
     align-items: flex-end;
 }
 
-.weekly-player {
+.monthly-player {
     color: var(--muted);
     font-size: 0.75rem;
     font-weight: 750;
@@ -95,22 +91,22 @@
     text-transform: uppercase;
 }
 
-.weekly-score strong {
+.monthly-score strong {
     font-size: clamp(2rem, 5vw, 3.2rem);
     line-height: 0.95;
     letter-spacing: -0.055em;
     font-variant-numeric: tabular-nums;
 }
 
-.weekly-score-left strong {
+.monthly-score-left strong {
     color: var(--peter);
 }
 
-.weekly-score-right strong {
+.monthly-score-right strong {
     color: var(--florian);
 }
 
-.weekly-track {
+.monthly-track {
     position: relative;
     height: 30px;
     overflow: visible;
@@ -120,7 +116,7 @@
     box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.3);
 }
 
-.weekly-fill {
+.monthly-fill {
     position: absolute;
     top: 0;
     bottom: 0;
@@ -128,21 +124,21 @@
     will-change: width;
 }
 
-.weekly-fill-left {
+.monthly-fill-left {
     left: 0;
     border-radius: 999px 0 0 999px;
     background: linear-gradient(90deg, rgba(75, 188, 255, 0.6), var(--peter));
     box-shadow: 8px 0 24px rgba(75, 188, 255, 0.22);
 }
 
-.weekly-fill-right {
+.monthly-fill-right {
     right: 0;
     border-radius: 0 999px 999px 0;
     background: linear-gradient(90deg, var(--florian), rgba(255, 107, 154, 0.62));
     box-shadow: -8px 0 24px rgba(255, 107, 154, 0.2);
 }
 
-.weekly-clash {
+.monthly-clash {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -161,7 +157,7 @@
     letter-spacing: -0.06em;
 }
 
-.weekly-clash::before {
+.monthly-clash::before {
     position: absolute;
     width: 4px;
     height: 70%;
@@ -170,14 +166,14 @@
     content: "";
 }
 
-.weekly-clash span {
+.monthly-clash span {
     position: relative;
     z-index: 1;
     padding: 0.2rem;
     background: rgba(255, 209, 102, 0.78);
 }
 
-.weekly-result {
+.monthly-result {
     min-height: 1.2rem;
     margin: 0.75rem 0 0;
     color: var(--muted);
@@ -319,26 +315,26 @@
 }
 
 @media (max-width: 720px) {
-    .weekly-battle {
+    .monthly-battle {
         padding: 1rem;
     }
 
-    .weekly-battle-heading {
+    .monthly-battle-heading {
         align-items: flex-start;
         flex-direction: column;
         gap: 0.35rem;
     }
 
-    .weekly-range {
+    .monthly-range {
         text-align: left;
     }
 
-    .weekly-battle-row {
+    .monthly-battle-row {
         grid-template-columns: 72px minmax(130px, 1fr) 72px;
         gap: 0.6rem;
     }
 
-    .weekly-track {
+    .monthly-track {
         height: 24px;
     }
 
@@ -347,14 +343,14 @@
         gap: 0.4rem;
     }
 
-    .weekly-clash {
+    .monthly-clash {
         width: 46px;
         height: 46px;
     }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .weekly-fill {
+    .monthly-fill {
         transition: none;
     }
 }
