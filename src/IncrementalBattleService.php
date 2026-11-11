@@ -660,6 +660,7 @@ final class IncrementalBattleService
                 ? $context['summary']['personaname']
                 : $context['config']['display_name'],
             'steam_id' => $context['steam_id'],
+            'account_created' => $this->int($context['summary']['timecreated'] ?? null),
             'avatar' => is_string($context['summary']['avatarfull'] ?? null) ? $context['summary']['avatarfull'] : '',
             'fighter_image' => $context['config']['fighter_image'],
             'profile_url' => is_string($context['summary']['profileurl'] ?? null)
@@ -715,6 +716,12 @@ final class IncrementalBattleService
             }
 
             $context = $contexts[$key];
+            $createdAt = $this->int($context['summary']['timecreated'] ?? null);
+
+            if ($createdAt !== null && $createdAt > 0) {
+                $player['account_created'] = $createdAt;
+            }
+
             $player['steam_name'] = is_string($context['summary']['personaname'] ?? null)
                 ? $context['summary']['personaname']
                 : $context['config']['display_name'];

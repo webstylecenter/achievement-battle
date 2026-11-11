@@ -379,6 +379,7 @@ final class BattleService
             'name' => $player['name'],
             'steam_name' => $player['steam_name'],
             'steam_id' => $player['steam_id'],
+            'account_created' => $player['account_created'],
             'avatar' => $player['avatar'],
             'fighter_image' => $player['fighter_image'],
             'profile_url' => $player['profile_url'],

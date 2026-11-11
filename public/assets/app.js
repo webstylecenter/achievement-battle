@@ -2,15 +2,6 @@
 
 const battleHero = document.getElementById('battle-hero');
 const battleGrid = document.getElementById('battle-grid');
-const weeklyBattle = document.getElementById('weekly-battle');
-const weeklyRange = document.getElementById('weekly-range');
-const weeklyLeftName = document.getElementById('weekly-left-name');
-const weeklyRightName = document.getElementById('weekly-right-name');
-const weeklyLeftCount = document.getElementById('weekly-left-count');
-const weeklyRightCount = document.getElementById('weekly-right-count');
-const weeklyLeftFill = document.getElementById('weekly-left-fill');
-const weeklyRightFill = document.getElementById('weekly-right-fill');
-const weeklyResult = document.getElementById('weekly-result');
 const winnerBanner = document.getElementById('winner-banner');
 const snapshotTime = document.getElementById('snapshot-time');
 const competitionNote = document.getElementById('competition-note');
@@ -33,6 +24,15 @@ const dateFormatter = new Intl.DateTimeFormat('nl-NL', {
 });
 const dayFormatter = new Intl.DateTimeFormat('nl-NL', {
     dateStyle: 'medium',
+});
+const historyDateFormatter = new Intl.DateTimeFormat('nl-NL', {
+    dateStyle: 'medium',
+    timeZone: 'Europe/Amsterdam',
+});
+const historyMonthFormatter = new Intl.DateTimeFormat('nl-NL', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'Europe/Amsterdam',
 });
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -85,7 +85,10 @@ function renderBattle(data) {
 
     renderCompetitionNote(players, competition);
     renderHero(players, competition, data.sync ?? {});
-    renderWeeklyBattle(players, data.weekly_competition ?? {}, data.sync ?? {});
+    renderPeriodBattle(players, data.weekly_competition ?? {}, data.sync ?? {}, 'weekly');
+    renderPeriodBattle(players, data.monthly_competition ?? {}, data.sync ?? {}, 'monthly');
+    renderPeriodHistory('weekly', data.weekly_history ?? [], players);
+    renderPeriodHistory('monthly', data.monthly_history ?? [], players);
     renderStats(players, competition);
     renderRecent(players);
     renderShared(players, data.shared_games ?? []);
@@ -147,8 +150,8 @@ function renderHero(players, competition, sync) {
 
     installImageFallbacks(battleGrid);
 
-    const duration = reducedMotion ? 50 : 4200;
-    const delay = reducedMotion ? 0 : 1150;
+    const duration = reducedMotion ? 50 : 2000;
+    const delay = reducedMotion ? 0 : 700;
     const counters = [...document.querySelectorAll('.counter')];
     const fills = [...document.querySelectorAll('.progress-fill')];
 
@@ -188,78 +191,90 @@ function renderHero(players, competition, sync) {
     }, delay);
 }
 
-function renderWeeklyBattle(players, weeklyCompetition, sync) {
+function renderPeriodBattle(players, competition, sync, period) {
+    const battle = document.getElementById(`${period}-battle`);
+    const range = document.getElementById(`${period}-range`);
+    const leftName = document.getElementById(`${period}-left-name`);
+    const rightName = document.getElementById(`${period}-right-name`);
+    const leftCount = document.getElementById(`${period}-left-count`);
+    const rightCount = document.getElementById(`${period}-right-count`);
+    const leftFill = document.getElementById(`${period}-left-fill`);
+    const rightFill = document.getElementById(`${period}-right-fill`);
+    const result = document.getElementById(`${period}-result`);
+
     if (
-        weeklyBattle === null
-        || weeklyRange === null
-        || weeklyLeftName === null
-        || weeklyRightName === null
-        || weeklyLeftCount === null
-        || weeklyRightCount === null
-        || weeklyLeftFill === null
-        || weeklyRightFill === null
-        || weeklyResult === null
+        battle === null
+        || range === null
+        || leftName === null
+        || rightName === null
+        || leftCount === null
+        || rightCount === null
+        || leftFill === null
+        || rightFill === null
+        || result === null
     ) {
         return;
     }
 
     if (sync.initial_complete === false) {
-        weeklyBattle.hidden = true;
+        battle.hidden = true;
         return;
     }
 
     const [left, right] = players;
-    const leftTarget = Number(left.weekly_achievement_count ?? 0);
-    const rightTarget = Number(right.weekly_achievement_count ?? 0);
-    const leftTargetPercent = weeklyLeftPercentage(leftTarget, rightTarget);
-    const rightTargetPercent = 100 - leftTargetPercent;
+    const leftTarget = Number(left[`${period}_achievement_count`] ?? 0);
+    const rightTarget = Number(right[`${period}_achievement_count`] ?? 0);
+    const leftTargetPercent = battleLeftPercentage(leftTarget, rightTarget);
 
-    weeklyLeftName.textContent = left.name;
-    weeklyRightName.textContent = right.name;
-    weeklyLeftCount.textContent = '0';
-    weeklyRightCount.textContent = '0';
-    weeklyLeftFill.style.width = '50%';
-    weeklyRightFill.style.width = '50%';
-    weeklyResult.textContent = '';
+    leftName.textContent = left.name;
+    rightName.textContent = right.name;
+    leftCount.textContent = '0';
+    rightCount.textContent = '0';
+    leftFill.style.width = '50%';
+    rightFill.style.width = '50%';
+    result.textContent = '';
 
-    if (weeklyCompetition.starts_at && weeklyCompetition.ends_at) {
-        weeklyRange.textContent = `${dayFormatter.format(new Date(weeklyCompetition.starts_at))} – ${dayFormatter.format(new Date(weeklyCompetition.ends_at))}`;
+    const resetTime = period === 'weekly'
+        ? 'Monday 00:00 NL'
+        : 'the 1st of the month at 00:00 NL';
+
+    if (competition.starts_at && competition.ends_at) {
+        range.textContent = `${dayFormatter.format(new Date(competition.starts_at))} – ${dayFormatter.format(new Date(competition.ends_at))}`;
     } else {
-        weeklyRange.textContent = 'Resets Monday 00:00 NL';
+        range.textContent = `Resets ${resetTime}`;
     }
 
-    weeklyBattle.hidden = false;
+    battle.hidden = false;
 
-    const delay = reducedMotion ? 0 : 1750;
-    const duration = reducedMotion ? 50 : 3000;
+    const delay = reducedMotion ? 0 : 700;
+    const duration = reducedMotion ? 50 : 2000;
 
     window.setTimeout(() => {
         const startedAt = performance.now();
 
         function tick(now) {
             const rawProgress = Math.min((now - startedAt) / duration, 1);
-            const acceleratedProgress = rawProgress * rawProgress * rawProgress;
-            const currentLeftPercent = 50 + ((leftTargetPercent - 50) * acceleratedProgress);
-            const currentRightPercent = 100 - currentLeftPercent;
+            const progress = rawProgress * rawProgress * rawProgress;
+            const currentLeftPercent = 50 + ((leftTargetPercent - 50) * progress);
 
-            weeklyLeftCount.textContent = numberFormatter.format(Math.round(leftTarget * acceleratedProgress));
-            weeklyRightCount.textContent = numberFormatter.format(Math.round(rightTarget * acceleratedProgress));
-            weeklyLeftFill.style.width = `${currentLeftPercent}%`;
-            weeklyRightFill.style.width = `${currentRightPercent}%`;
+            leftCount.textContent = numberFormatter.format(Math.round(leftTarget * progress));
+            rightCount.textContent = numberFormatter.format(Math.round(rightTarget * progress));
+            leftFill.style.width = `${currentLeftPercent}%`;
+            rightFill.style.width = `${100 - currentLeftPercent}%`;
 
             if (rawProgress < 1) {
                 requestAnimationFrame(tick);
                 return;
             }
 
-            weeklyResult.textContent = weeklyResultText(left, right, leftTarget, rightTarget);
+            result.textContent = periodResultText(left, right, leftTarget, rightTarget, period, resetTime);
         }
 
         requestAnimationFrame(tick);
     }, delay);
 }
 
-function weeklyLeftPercentage(leftScore, rightScore) {
+function battleLeftPercentage(leftScore, rightScore) {
     if (leftScore === rightScore || leftScore + rightScore === 0) {
         return 50;
     }
@@ -269,19 +284,91 @@ function weeklyLeftPercentage(leftScore, rightScore) {
     return Math.min(85, Math.max(15, proportional));
 }
 
-function weeklyResultText(left, right, leftScore, rightScore) {
+function periodResultText(left, right, leftScore, rightScore, period, resetTime) {
+    const label = period === 'weekly' ? 'this week' : 'this month';
+
     if (leftScore === 0 && rightScore === 0) {
-        return 'No achievements unlocked yet this week · resets Monday 00:00 NL';
+        return `No achievements unlocked yet ${label} · resets ${resetTime}`;
     }
 
     if (leftScore === rightScore) {
-        return `Weekly battle is tied at ${numberFormatter.format(leftScore)} · resets Monday 00:00 NL`;
+        return `${period === 'weekly' ? 'Weekly' : 'Monthly'} battle is tied at ${numberFormatter.format(leftScore)} · resets ${resetTime}`;
     }
 
     const winner = leftScore > rightScore ? left : right;
     const lead = Math.abs(leftScore - rightScore);
 
-    return `${winner.name} leads this week by ${numberFormatter.format(lead)} achievement${lead === 1 ? '' : 's'} · resets Monday 00:00 NL`;
+    return `${winner.name} leads ${label} by ${numberFormatter.format(lead)} achievement${lead === 1 ? '' : 's'} · resets ${resetTime}`;
+}
+
+function renderPeriodHistory(period, rows, players) {
+    const toggle = document.getElementById(`${period}-history-toggle`);
+    const container = document.getElementById(`${period}-history`);
+
+    if (toggle === null || container === null || players.length !== 2) {
+        return;
+    }
+
+    const [left, right] = players;
+    const periods = period === 'weekly' ? 'weeks' : 'months';
+    const history = Array.isArray(rows) ? rows : [];
+    const validRows = history.filter((row) => (
+        row !== null
+        && typeof row === 'object'
+        && typeof row.starts_at === 'string'
+        && typeof row.ends_at === 'string'
+        && row.players !== null
+        && typeof row.players === 'object'
+    ));
+
+    container.innerHTML = `
+        <div class="period-history-heading">
+            <strong>Previous ${periods}</strong>
+            <span>${escapeHtml(left.name)} / ${escapeHtml(right.name)}</span>
+        </div>
+        <div class="period-history-list">
+            ${validRows.map((row) => {
+                const start = new Date(row.starts_at);
+                const end = new Date(row.ends_at);
+                const leftScore = Math.max(0, Number(row.players[left.key] ?? 0));
+                const rightScore = Math.max(0, Number(row.players[right.key] ?? 0));
+
+                if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) {
+                    return '';
+                }
+
+                const label = period === 'monthly'
+                    ? historyMonthFormatter.format(start)
+                    : `${historyDateFormatter.format(start)} – ${historyDateFormatter.format(new Date(end.getTime() - 1))}`;
+                const leftPercent = battleLeftPercentage(leftScore, rightScore);
+
+                return `
+                    <div class="period-history-row">
+                        <span class="period-history-date">${escapeHtml(label)}</span>
+                        <div class="period-history-scores" aria-label="${escapeAttribute(`${left.name}: ${leftScore}, ${right.name}: ${rightScore}`)}">
+                            <strong class="period-history-peter">${numberFormatter.format(leftScore)}</strong>
+                            <span class="period-history-meter" aria-hidden="true">
+                                <span class="period-history-meter-left" style="width: ${leftPercent}%"></span>
+                                <span class="period-history-meter-right" style="width: ${100 - leftPercent}%"></span>
+                            </span>
+                            <strong class="period-history-florian">${numberFormatter.format(rightScore)}</strong>
+                        </div>
+                    </div>
+                `;
+            }).join('') || `<p class="period-history-empty">No previous ${periods} available yet.</p>`}
+        </div>
+    `;
+
+    container.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('aria-label', `Show previous ${periods}`);
+
+    toggle.addEventListener('click', () => {
+        const expanded = toggle.getAttribute('aria-expanded') === 'true';
+        container.hidden = expanded;
+        toggle.setAttribute('aria-expanded', String(!expanded));
+        toggle.setAttribute('aria-label', `${expanded ? 'Show' : 'Hide'} previous ${periods}`);
+    });
 }
 
 function revealWinner(players) {
