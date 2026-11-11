@@ -25,6 +25,15 @@ const dateFormatter = new Intl.DateTimeFormat('nl-NL', {
 const dayFormatter = new Intl.DateTimeFormat('nl-NL', {
     dateStyle: 'medium',
 });
+const historyDateFormatter = new Intl.DateTimeFormat('nl-NL', {
+    dateStyle: 'medium',
+    timeZone: 'Europe/Amsterdam',
+});
+const historyMonthFormatter = new Intl.DateTimeFormat('nl-NL', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'Europe/Amsterdam',
+});
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 triggerVersusIntro();
@@ -78,6 +87,8 @@ function renderBattle(data) {
     renderHero(players, competition, data.sync ?? {});
     renderPeriodBattle(players, data.weekly_competition ?? {}, data.sync ?? {}, 'weekly');
     renderPeriodBattle(players, data.monthly_competition ?? {}, data.sync ?? {}, 'monthly');
+    renderPeriodHistory('weekly', data.weekly_history ?? [], players);
+    renderPeriodHistory('monthly', data.monthly_history ?? [], players);
     renderStats(players, competition);
     renderRecent(players);
     renderShared(players, data.shared_games ?? []);
@@ -288,6 +299,76 @@ function periodResultText(left, right, leftScore, rightScore, period, resetTime)
     const lead = Math.abs(leftScore - rightScore);
 
     return `${winner.name} leads ${label} by ${numberFormatter.format(lead)} achievement${lead === 1 ? '' : 's'} · resets ${resetTime}`;
+}
+
+function renderPeriodHistory(period, rows, players) {
+    const toggle = document.getElementById(`${period}-history-toggle`);
+    const container = document.getElementById(`${period}-history`);
+
+    if (toggle === null || container === null || players.length !== 2) {
+        return;
+    }
+
+    const [left, right] = players;
+    const periods = period === 'weekly' ? 'weeks' : 'months';
+    const history = Array.isArray(rows) ? rows : [];
+    const validRows = history.filter((row) => (
+        row !== null
+        && typeof row === 'object'
+        && typeof row.starts_at === 'string'
+        && typeof row.ends_at === 'string'
+        && row.players !== null
+        && typeof row.players === 'object'
+    ));
+
+    container.innerHTML = `
+        <div class="period-history-heading">
+            <strong>Previous ${periods}</strong>
+            <span>${escapeHtml(left.name)} / ${escapeHtml(right.name)}</span>
+        </div>
+        <div class="period-history-list">
+            ${validRows.map((row) => {
+                const start = new Date(row.starts_at);
+                const end = new Date(row.ends_at);
+                const leftScore = Math.max(0, Number(row.players[left.key] ?? 0));
+                const rightScore = Math.max(0, Number(row.players[right.key] ?? 0));
+
+                if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) {
+                    return '';
+                }
+
+                const label = period === 'monthly'
+                    ? historyMonthFormatter.format(start)
+                    : `${historyDateFormatter.format(start)} – ${historyDateFormatter.format(new Date(end.getTime() - 1))}`;
+                const leftPercent = battleLeftPercentage(leftScore, rightScore);
+
+                return `
+                    <div class="period-history-row">
+                        <span class="period-history-date">${escapeHtml(label)}</span>
+                        <div class="period-history-scores" aria-label="${escapeAttribute(`${left.name}: ${leftScore}, ${right.name}: ${rightScore}`)}">
+                            <strong class="period-history-peter">${numberFormatter.format(leftScore)}</strong>
+                            <span class="period-history-meter" aria-hidden="true">
+                                <span class="period-history-meter-left" style="width: ${leftPercent}%"></span>
+                                <span class="period-history-meter-right" style="width: ${100 - leftPercent}%"></span>
+                            </span>
+                            <strong class="period-history-florian">${numberFormatter.format(rightScore)}</strong>
+                        </div>
+                    </div>
+                `;
+            }).join('') || `<p class="period-history-empty">No previous ${periods} available yet.</p>`}
+        </div>
+    `;
+
+    container.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('aria-label', `Show previous ${periods}`);
+
+    toggle.addEventListener('click', () => {
+        const expanded = toggle.getAttribute('aria-expanded') === 'true';
+        container.hidden = expanded;
+        toggle.setAttribute('aria-expanded', String(!expanded));
+        toggle.setAttribute('aria-label', `${expanded ? 'Show' : 'Hide'} previous ${periods}`);
+    });
 }
 
 function revealWinner(players) {
