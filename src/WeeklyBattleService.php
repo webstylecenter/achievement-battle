@@ -64,6 +64,8 @@ final class WeeklyBattleService
             'ends_at' => $month['ends_at'],
             'timezone' => self::TIMEZONE,
         ];
+        $snapshot['weekly_history'] = $counts['weekly_history'];
+        $snapshot['monthly_history'] = $counts['monthly_history'];
 
         return $snapshot;
     }
@@ -72,24 +74,44 @@ final class WeeklyBattleService
      * @param array<string, mixed> $snapshot
      * @param array{start_timestamp: int, end_timestamp: int, starts_at: string, ends_at: string} $week
      * @param array{start_timestamp: int, end_timestamp: int, starts_at: string, ends_at: string} $month
-     * @return array{weekly: array<string, int>, monthly: array<string, int>}
+     * @return array{
+     *     weekly: array<string, int>,
+     *     monthly: array<string, int>,
+     *     weekly_history: list<array{starts_at: string, ends_at: string, players: array<string, int>}>,
+     *     monthly_history: list<array{starts_at: string, ends_at: string, players: array<string, int>}>
+     * }
      */
     private function periodCounts(array $snapshot, array $week, array $month): array
     {
-        $signature = $this->sourceSignature($week['start_timestamp'], $month['start_timestamp']);
+        $players = is_array($snapshot['players'] ?? null) ? $snapshot['players'] : [];
+        $createdAt = $this->florianCreatedAt($players);
+        $signature = $this->sourceSignature($week['start_timestamp'], $month['start_timestamp'], $createdAt);
         $cached = $this->cache->read(self::CACHE_KEY);
         $cachedWeekly = is_array($cached['weekly_counts'] ?? null) ? $cached['weekly_counts'] : null;
         $cachedMonthly = is_array($cached['monthly_counts'] ?? null) ? $cached['monthly_counts'] : null;
+        $cachedWeeklyHistory = is_array($cached['weekly_history'] ?? null) ? $cached['weekly_history'] : null;
+        $cachedMonthlyHistory = is_array($cached['monthly_history'] ?? null) ? $cached['monthly_history'] : null;
 
-        if (($cached['signature'] ?? null) === $signature && $cachedWeekly !== null && $cachedMonthly !== null) {
+        if (
+            ($cached['signature'] ?? null) === $signature
+            && $cachedWeekly !== null
+            && $cachedMonthly !== null
+            && $cachedWeeklyHistory !== null
+            && $cachedMonthlyHistory !== null
+        ) {
             return [
                 'weekly' => $this->normalizeCounts($cachedWeekly),
                 'monthly' => $this->normalizeCounts($cachedMonthly),
+                'weekly_history' => $this->normalizeHistory($cachedWeeklyHistory),
+                'monthly_history' => $this->normalizeHistory($cachedMonthlyHistory),
             ];
         }
 
-        $players = is_array($snapshot['players'] ?? null) ? $snapshot['players'] : [];
-        $counts = ['weekly' => [], 'monthly' => []];
+        $weeklyCounts = [];
+        $monthlyCounts = [];
+        $weeklyBuckets = [];
+        $monthlyBuckets = [];
+        $firstFlorianUnlock = null;
 
         foreach ($players as $player) {
             if (!is_array($player)) {
@@ -102,7 +124,7 @@ final class WeeklyBattleService
                 continue;
             }
 
-            $playerCounts = $this->countAchievements(
+            $stats = $this->countAchievements(
                 $playerKey,
                 $week['start_timestamp'],
                 $week['end_timestamp'],
@@ -110,22 +132,39 @@ final class WeeklyBattleService
                 $month['end_timestamp'],
             );
 
-            $counts['weekly'][$playerKey] = $playerCounts['weekly'];
-            $counts['monthly'][$playerKey] = $playerCounts['monthly'];
+            $weeklyCounts[$playerKey] = $stats['weekly'];
+            $monthlyCounts[$playerKey] = $stats['monthly'];
+            $weeklyBuckets[$playerKey] = $stats['weekly_buckets'];
+            $monthlyBuckets[$playerKey] = $stats['monthly_buckets'];
+
+            if ($playerKey === 'florian') {
+                $firstFlorianUnlock = $stats['earliest_unlock'];
+            }
         }
+
+        $historyStart = $createdAt ?? $firstFlorianUnlock;
+        $weeklyHistory = $this->historyRows($historyStart, $week['start_timestamp'], 'weekly', $weeklyBuckets);
+        $monthlyHistory = $this->historyRows($historyStart, $month['start_timestamp'], 'monthly', $monthlyBuckets);
 
         try {
             $this->cache->write(self::CACHE_KEY, [
                 'signature' => $signature,
-                'weekly_counts' => $counts['weekly'],
-                'monthly_counts' => $counts['monthly'],
+                'weekly_counts' => $weeklyCounts,
+                'monthly_counts' => $monthlyCounts,
+                'weekly_history' => $weeklyHistory,
+                'monthly_history' => $monthlyHistory,
             ]);
         } catch (RuntimeException $exception) {
-            // Scores are still available even if the web server cannot write the summary cache.
+            // Continue showing scores if Apache cannot write the optional summary cache.
             error_log('Could not cache achievement period scores: ' . $exception->getMessage());
         }
 
-        return $counts;
+        return [
+            'weekly' => $weeklyCounts,
+            'monthly' => $monthlyCounts,
+            'weekly_history' => $weeklyHistory,
+            'monthly_history' => $monthlyHistory,
+        ];
     }
 
     /**
@@ -162,12 +201,13 @@ final class WeeklyBattleService
         ];
     }
 
-    private function sourceSignature(int $weekStartTimestamp, int $monthStartTimestamp): string
+    private function sourceSignature(int $weekStartTimestamp, int $monthStartTimestamp, ?int $createdAt): string
     {
         $files = glob($this->config->rootDirectory() . '/var/cache/achievements-*.json', GLOB_NOSORT);
         $parts = [
             (string) $weekStartTimestamp,
             (string) $monthStartTimestamp,
+            (string) ($createdAt ?? 0),
             implode(',', array_keys($this->config->excludedAppIds())),
         ];
 
@@ -192,7 +232,13 @@ final class WeeklyBattleService
     }
 
     /**
-     * @return array{weekly: int, monthly: int}
+     * @return array{
+     *     weekly: int,
+     *     monthly: int,
+     *     weekly_buckets: array<int, int>,
+     *     monthly_buckets: array<int, int>,
+     *     earliest_unlock: int|null
+     * }
      */
     private function countAchievements(
         string $playerKey,
@@ -201,7 +247,13 @@ final class WeeklyBattleService
         int $monthStart,
         int $monthEnd,
     ): array {
-        $counts = ['weekly' => 0, 'monthly' => 0];
+        $counts = [
+            'weekly' => 0,
+            'monthly' => 0,
+            'weekly_buckets' => [],
+            'monthly_buckets' => [],
+            'earliest_unlock' => null,
+        ];
         $safePlayerKey = preg_replace('/[^a-zA-Z0-9._-]/', '_', $playerKey);
 
         if (!is_string($safePlayerKey) || $safePlayerKey === '') {
@@ -220,6 +272,7 @@ final class WeeklyBattleService
         }
 
         $excludedAppIds = $this->config->excludedAppIds();
+        $now = time();
 
         foreach ($files as $file) {
             $appId = $this->appIdFromCacheFile($file, $safePlayerKey);
@@ -241,8 +294,12 @@ final class WeeklyBattleService
 
                 $unlockTime = $achievement['unlock_time'] ?? null;
 
-                if (!is_int($unlockTime)) {
+                if (!is_int($unlockTime) || $unlockTime <= 0 || $unlockTime > $now) {
                     continue;
+                }
+
+                if ($counts['earliest_unlock'] === null || $unlockTime < $counts['earliest_unlock']) {
+                    $counts['earliest_unlock'] = $unlockTime;
                 }
 
                 if ($unlockTime >= $weekStart && $unlockTime < $weekEnd) {
@@ -252,10 +309,72 @@ final class WeeklyBattleService
                 if ($unlockTime >= $monthStart && $unlockTime < $monthEnd) {
                     $counts['monthly']++;
                 }
+
+                $date = (new DateTimeImmutable('@' . $unlockTime))->setTimezone($this->timezone);
+                $weekBucket = $date->modify('monday this week')->setTime(0, 0, 0)->getTimestamp();
+                $monthBucket = $date->modify('first day of this month')->setTime(0, 0, 0)->getTimestamp();
+
+                $counts['weekly_buckets'][$weekBucket] = ($counts['weekly_buckets'][$weekBucket] ?? 0) + 1;
+                $counts['monthly_buckets'][$monthBucket] = ($counts['monthly_buckets'][$monthBucket] ?? 0) + 1;
             }
         }
 
         return $counts;
+    }
+
+    /**
+     * @param array<mixed> $players
+     */
+    private function florianCreatedAt(array $players): ?int
+    {
+        foreach ($players as $player) {
+            if (!is_array($player) || ($player['key'] ?? null) !== 'florian') {
+                continue;
+            }
+
+            $createdAt = $player['account_created'] ?? null;
+
+            return is_int($createdAt) && $createdAt > 0 && $createdAt <= time() ? $createdAt : null;
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, array<int, int>> $buckets
+     * @return list<array{starts_at: string, ends_at: string, players: array<string, int>}>
+     */
+    private function historyRows(?int $origin, int $currentStart, string $period, array $buckets): array
+    {
+        if ($origin === null || $origin <= 0) {
+            return [];
+        }
+
+        $originDate = (new DateTimeImmutable('@' . $origin))->setTimezone($this->timezone);
+        $first = $originDate
+            ->modify($period === 'weekly' ? 'monday this week' : 'first day of this month')
+            ->setTime(0, 0, 0);
+        $current = (new DateTimeImmutable('@' . $currentStart))->setTimezone($this->timezone);
+        $stepBack = $period === 'weekly' ? '-7 days' : '-1 month';
+        $stepForward = $period === 'weekly' ? '+7 days' : '+1 month';
+        $rows = [];
+
+        for ($cursor = $current->modify($stepBack); $cursor >= $first; $cursor = $cursor->modify($stepBack)) {
+            $scores = [];
+
+            foreach ($this->config->players() as $player) {
+                $key = $player['key'];
+                $scores[$key] = $buckets[$key][$cursor->getTimestamp()] ?? 0;
+            }
+
+            $rows[] = [
+                'starts_at' => $cursor->format(DATE_ATOM),
+                'ends_at' => $cursor->modify($stepForward)->format(DATE_ATOM),
+                'players' => $scores,
+            ];
+        }
+
+        return $rows;
     }
 
 
@@ -309,5 +428,32 @@ final class WeeklyBattleService
         }
 
         return $normalized;
+    }
+    /**
+     * @param array<mixed> $rows
+     * @return list<array{starts_at: string, ends_at: string, players: array<string, int>}>
+     */
+    private function normalizeHistory(array $rows): array
+    {
+        $history = [];
+
+        foreach ($rows as $row) {
+            if (
+                !is_array($row)
+                || !is_string($row['starts_at'] ?? null)
+                || !is_string($row['ends_at'] ?? null)
+                || !is_array($row['players'] ?? null)
+            ) {
+                continue;
+            }
+
+            $history[] = [
+                'starts_at' => $row['starts_at'],
+                'ends_at' => $row['ends_at'],
+                'players' => $this->normalizeCounts($row['players']),
+            ];
+        }
+
+        return $history;
     }
 }
