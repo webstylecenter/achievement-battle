@@ -42,6 +42,7 @@ final class ConsoleAchievementService
             }
 
             $key = $player['key'];
+            $playerImports = is_array($import[$key] ?? null) ? $import[$key] : [];
             $sources = ['pc' => $this->pcScore($player)];
             $start = is_int($competition['timestamp'] ?? null) ? $competition['timestamp'] : null;
 
@@ -53,7 +54,7 @@ final class ConsoleAchievementService
             }
 
             foreach (self::PLATFORMS as $platform) {
-                $games = $import[$key][$platform] ?? null;
+                $games = $playerImports[$platform] ?? null;
                 $score = $this->consoleScore(
                     is_array($games) ? $games : [],
                     $platform,
@@ -114,7 +115,7 @@ final class ConsoleAchievementService
     }
 
     /**
-     * @return array<mixed>
+     * @return array<string, mixed>
      */
     private function loadImport(): array
     {
@@ -138,7 +139,19 @@ final class ConsoleAchievementService
             return [];
         }
 
-        return is_array($data) ? $data : [];
+        if (!is_array($data)) {
+            return [];
+        }
+
+        $players = [];
+
+        foreach ($data as $key => $value) {
+            if (is_string($key) && is_array($value)) {
+                $players[$key] = $value;
+            }
+        }
+
+        return $players;
     }
 
     /**
@@ -163,7 +176,18 @@ final class ConsoleAchievementService
 
     /**
      * @param array<mixed> $games
-     * @return array<string, mixed>
+     * @return array{
+     *     achievement_count: int,
+     *     lifetime_achievement_count: int,
+     *     completed_games: int,
+     *     lifetime_completed_games: int,
+     *     games_with_achievements: int,
+     *     hours_played: int,
+     *     monthly_achievement_count: int,
+     *     month_buckets: array<int, int>,
+     *     rare_achievements: list<array<string, mixed>>,
+     *     recent_games: list<array<string, mixed>>
+     * }
      */
     private function consoleScore(
         array $games,
