@@ -4,3 +4,4 @@
 /vendor/
 
 /var/import/*
+/tools/console-importer/node_modules/
