@@ -16,6 +16,12 @@ const confetti = document.getElementById('confetti');
 const leftPortrait = document.getElementById('left-portrait');
 const rightPortrait = document.getElementById('right-portrait');
 const gameFallbackImage = '/assets/game-fallback.svg';
+const platformFilter = document.getElementById('platform-filter');
+const platformStatus = document.getElementById('platform-status');
+const sharedGamesSection = document.getElementById('shared-games-section');
+let currentPlatform = 'all';
+let battleData = null;
+let renderId = 0;
 
 const numberFormatter = new Intl.NumberFormat('nl-NL');
 const dateFormatter = new Intl.DateTimeFormat('nl-NL', {
@@ -44,10 +50,31 @@ fetch('/api.php', { cache: 'no-store' })
 
         return data;
     })
-    .then(renderBattle)
+    .then((data) => {
+        battleData = data;
+        renderBattle(data);
+    })
     .catch((error) => {
         battleGrid.innerHTML = `<div class="error-card"><strong>Battle data is not ready.</strong><p>${escapeHtml(error.message)}</p></div>`;
     });
+
+platformFilter?.addEventListener('change', (event) => {
+    const target = event.target;
+
+    if (!(target instanceof HTMLInputElement) || target.name !== 'platform') {
+        return;
+    }
+
+    if (!['all', 'pc', 'xbox', 'playstation'].includes(target.value)) {
+        return;
+    }
+
+    currentPlatform = target.value;
+
+    if (battleData !== null) {
+        renderBattle(battleData, true);
+    }
+});
 
 function triggerVersusIntro() {
     if (reducedMotion || battleHero === null) {
@@ -63,8 +90,9 @@ function triggerVersusIntro() {
     }, 1550);
 }
 
-function renderBattle(data) {
-    const players = data.players ?? [];
+function renderBattle(data, skipAnimations = false) {
+    const players = displayPlayers(data.players ?? []);
+    const generation = ++renderId;
     const competition = data.competition ?? {};
 
     if (players.length !== 2) {
@@ -79,19 +107,128 @@ function renderBattle(data) {
         rightPortrait.src = players[1].fighter_image;
     }
 
+    renderPlatformStatus(data.players ?? []);
     renderCompetitionNote(players, competition);
-    renderHero(players, competition, data.sync ?? {});
-    renderMonthlyBattle(players, data.monthly_competition ?? {}, data.sync ?? {});
-    renderMonthlyHistory(data.monthly_history ?? [], players);
+    renderHero(players, competition, data.sync ?? {}, skipAnimations, generation);
+    renderMonthlyBattle(players, data.monthly_competition ?? {}, data.sync ?? {}, skipAnimations, generation);
+    renderMonthlyHistory(filteredMonthlyHistory(data), players);
     renderStats(players, competition);
     renderRecent(players);
-    renderShared(players, data.shared_games ?? []);
+    if (sharedGamesSection !== null) {
+        sharedGamesSection.hidden = currentPlatform === 'xbox' || currentPlatform === 'playstation';
+    }
+
+    if (sharedGamesSection === null || !sharedGamesSection.hidden) {
+        renderShared(players, data.shared_games ?? []);
+    }
     renderRare(players);
     renderExcluded(data.excluded_games ?? []);
 
     if (data.generated_at) {
         snapshotTime.textContent = `Data refreshed: ${dateFormatter.format(new Date(data.generated_at))}`;
     }
+}
+
+
+function displayPlayers(players) {
+    return players.map((player) => {
+        const sources = player.platform_scores;
+
+        if (!sources) {
+            return player;
+        }
+
+        const keys = currentPlatform === 'all' ? ['pc', 'xbox', 'playstation'] : [currentPlatform];
+        const selected = keys.map((key) => sources[key]).filter(Boolean);
+        const sum = (field) => selected.reduce((total, source) => total + Number(source[field] ?? 0), 0);
+        const rare = selected.flatMap((source) => source.rare_achievements ?? []);
+        const recent = selected.flatMap((source) => source.recent_games ?? []);
+
+        rare.sort((a, b) => Number(a.percentage) - Number(b.percentage));
+        recent.sort((a, b) => Number(b.last_played ?? 0) - Number(a.last_played ?? 0));
+
+        return {
+            ...player,
+            achievement_count: sum('achievement_count'),
+            lifetime_achievement_count: sum('lifetime_achievement_count'),
+            completed_games: sum('completed_games'),
+            lifetime_completed_games: sum('lifetime_completed_games'),
+            games_with_achievements: sum('games_with_achievements'),
+            monthly_achievement_count: sum('monthly_achievement_count'),
+            hours_played: currentPlatform === 'pc' || currentPlatform === 'all'
+                ? Number(sources.pc?.hours_played ?? 0)
+                : 0,
+            rare_achievements: rare.slice(0, 10),
+            recent_games: recent.slice(0, 4),
+        };
+    });
+}
+
+function filteredMonthlyHistory(data) {
+    const source = data.platform_monthly_histories ?? {};
+    const pcHistory = source.pc ?? data.monthly_history ?? [];
+
+    if (currentPlatform === 'pc') {
+        return pcHistory;
+    }
+
+    if (currentPlatform !== 'all') {
+        return source[currentPlatform] ?? [];
+    }
+
+    return pcHistory.map((row, index) => {
+        const scores = {...row.players};
+
+        for (const platform of ['xbox', 'playstation']) {
+            const record = source[platform]?.[index]?.players ?? {};
+
+            for (const playerKey of Object.keys(scores)) {
+                scores[playerKey] += Number(record[playerKey] ?? 0);
+            }
+        }
+
+        return {...row, players: scores};
+    });
+}
+
+function renderPlatformStatus(players) {
+    if (platformStatus === null) {
+        return;
+    }
+
+    const names = { pc: 'PC', xbox: 'Xbox', playstation: 'PlayStation' };
+    const platforms = currentPlatform === 'all' ? ['xbox', 'playstation'] : [currentPlatform];
+    const missing = [];
+
+    for (const platform of platforms) {
+        if (platform === 'pc') {
+            continue;
+        }
+
+        for (const player of players) {
+            if (player.platform_scores?.[platform]?.imported !== true) {
+                missing.push(`${player.name}: ${names[platform]}`);
+            }
+        }
+    }
+
+    platformStatus.textContent = missing.length > 0
+        ? `Not imported yet: ${missing.join(', ')}. Totals include imported sources only.`
+        : currentPlatform === 'all'
+            ? 'Achievements from each platform are counted separately.'
+            : `${names[currentPlatform]} achievements only.`;
+}
+
+function sourceBadge(platform) {
+    const types = {
+        pc: ['PC', 'PC / Steam'],
+        xbox: ['X', 'Xbox'],
+        playstation: ['PS', 'PlayStation'],
+    };
+    const [label, title] = types[platform] ?? types.pc;
+    const source = Object.hasOwn(types, platform) ? platform : 'pc';
+
+    return `<span class="source-badge source-badge-${source}" title="${title}" aria-label="${title}">${label}</span>`;
 }
 
 function renderCompetitionNote(players, competition) {
@@ -107,7 +244,7 @@ function renderCompetitionNote(players, competition) {
         : `Battle score counts achievements unlocked since ${startDate}.`;
 }
 
-function renderHero(players, competition, sync) {
+function renderHero(players, competition, sync, skipAnimations = false, generation = renderId) {
     const maxAchievements = Math.max(...players.map((player) => player.achievement_count), 1);
     const counterLabel = competition.starts_at ? 'achievements since battle start' : 'counted achievements';
     const completedLabel = competition.starts_at ? 'perfect games since start' : 'perfect games';
@@ -144,12 +281,16 @@ function renderHero(players, competition, sync) {
 
     installImageFallbacks(battleGrid);
 
-    const duration = reducedMotion ? 50 : 2000;
-    const delay = reducedMotion ? 0 : 700;
+    const duration = reducedMotion || skipAnimations ? 50 : 2000;
+    const delay = reducedMotion || skipAnimations ? 0 : 700;
     const counters = [...document.querySelectorAll('.counter')];
     const fills = [...document.querySelectorAll('.progress-fill')];
 
     window.setTimeout(() => {
+        if (generation !== renderId) {
+            return;
+        }
+
         fills.forEach((fill) => {
             fill.animate(
                 [{ width: '0%' }, { width: `${fill.dataset.width}%` }],
@@ -160,6 +301,10 @@ function renderHero(players, competition, sync) {
         const startedAt = performance.now();
 
         function tick(now) {
+            if (generation !== renderId) {
+                return;
+            }
+
             const rawProgress = Math.min((now - startedAt) / duration, 1);
             const acceleratedProgress = rawProgress * rawProgress * rawProgress;
 
@@ -178,14 +323,14 @@ function renderHero(players, competition, sync) {
                 return;
             }
 
-            revealWinner(players);
+            revealWinner(players, !skipAnimations);
         }
 
         requestAnimationFrame(tick);
     }, delay);
 }
 
-function renderMonthlyBattle(players, competition, sync) {
+function renderMonthlyBattle(players, competition, sync, skipAnimations = false, generation = renderId) {
     const battle = document.getElementById('monthly-battle');
     const range = document.getElementById('monthly-range');
     const leftName = document.getElementById('monthly-left-name');
@@ -238,13 +383,21 @@ function renderMonthlyBattle(players, competition, sync) {
 
     battle.hidden = false;
 
-    const delay = reducedMotion ? 0 : 700;
-    const duration = reducedMotion ? 50 : 2000;
+    const delay = reducedMotion || skipAnimations ? 0 : 700;
+    const duration = reducedMotion || skipAnimations ? 50 : 2000;
 
     window.setTimeout(() => {
+        if (generation !== renderId) {
+            return;
+        }
+
         const startedAt = performance.now();
 
         function tick(now) {
+            if (generation !== renderId) {
+                return;
+            }
+
             const rawProgress = Math.min((now - startedAt) / duration, 1);
             const progress = rawProgress * rawProgress * rawProgress;
             const currentLeftPercent = 50 + ((leftTargetPercent - 50) * progress);
@@ -352,15 +505,15 @@ function renderMonthlyHistory(rows, players) {
     toggle.setAttribute('aria-expanded', 'false');
     toggle.setAttribute('aria-label', 'Show previous months');
 
-    toggle.addEventListener('click', () => {
+    toggle.onclick = () => {
         const expanded = toggle.getAttribute('aria-expanded') === 'true';
         container.hidden = expanded;
         toggle.setAttribute('aria-expanded', String(!expanded));
         toggle.setAttribute('aria-label', `${expanded ? 'Show' : 'Hide'} previous months`);
-    });
+    };
 }
 
-function revealWinner(players) {
+function revealWinner(players, showConfetti = true) {
     const [left, right] = players;
 
     if (left.achievement_count === right.achievement_count) {
@@ -376,7 +529,7 @@ function revealWinner(players) {
     winnerBanner.textContent = `${winner.name} leads by ${numberFormatter.format(lead)} achievements.`;
     winnerBanner.hidden = false;
 
-    if (!reducedMotion) {
+    if (!reducedMotion && showConfetti) {
         launchConfetti(winner.key);
     }
 }
