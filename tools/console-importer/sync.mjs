@@ -173,6 +173,22 @@ export function psnGame(title, trophies, earned, accountId = '') {
     };
 }
 
+export async function resolvePsnOnlineId(psn, authorization, onlineId) {
+    const response = await psn.makeUniversalSearch(authorization, onlineId, 'SocialAllAccounts');
+    const results = (response.domainResponses ?? []).flatMap((domain) => domain.results ?? []);
+    const match = results.find((result) => (
+        typeof result.socialMetadata?.onlineId === 'string'
+        && result.socialMetadata.onlineId.toLowerCase() === onlineId.toLowerCase()
+    ));
+    const accountId = match?.socialMetadata?.accountId;
+
+    if (typeof accountId !== 'string' || !/^\d+$/.test(accountId)) {
+        throw new Error('Cannot resolve PSN Online ID ' + onlineId + '. Use a numeric account ID or "me".');
+    }
+
+    return accountId;
+}
+
 async function psnTitles(psn, authorization, accountId) {
     const titles = [];
 
@@ -268,6 +284,24 @@ async function xblRequest(url, apiKey, request = fetch) {
     }
 
     throw new Error('Unable to fetch OpenXBL data.');
+}
+
+export async function resolveXboxGamertag(gamertag, apiKey, request = fetch) {
+    const search = await xblRequest(
+        'https://api.xbl.io/v2/search/' + encodeURIComponent(gamertag),
+        apiKey,
+        request,
+    );
+    const match = (search.people ?? []).find((player) => (
+        typeof player.gamertag === 'string'
+        && player.gamertag.toLowerCase() === gamertag.toLowerCase()
+    ));
+
+    if (typeof match?.xuid !== 'string' || !/^\d{10,20}$/.test(match.xuid)) {
+        throw new Error('Cannot resolve Xbox gamertag ' + gamertag + ' to an exact XUID.');
+    }
+
+    return match.xuid;
 }
 
 export function xboxGames(records) {
@@ -370,11 +404,11 @@ export async function sync(importPsnAccount = importPsn, importXboxAccount = imp
     }
 
     const next = structuredClone(current);
-    const psnAccounts = players.filter((key) => process.env['PSN_' + key.toUpperCase() + '_ACCOUNT_ID']);
-    const xboxAccounts = players.filter((key) => process.env['XBOX_' + key.toUpperCase() + '_XUID']);
+    const psnAccounts = players.filter((key) => process.env['PSN_' + key.toUpperCase() + '_ACCOUNT_ID'] || process.env['PSN_' + key.toUpperCase() + '_ONLINE_ID']);
+    const xboxAccounts = players.filter((key) => process.env['XBOX_' + key.toUpperCase() + '_XUID'] || process.env['XBOX_' + key.toUpperCase() + '_GAMERTAG']);
 
     if (psnAccounts.length === 0 && xboxAccounts.length === 0) {
-        throw new Error('No console account IDs configured. Set PSN_*_ACCOUNT_ID or XBOX_*_XUID.');
+        throw new Error('No console accounts configured. Set PSN_*_ONLINE_ID / PSN_*_ACCOUNT_ID or XBOX_*_GAMERTAG / XBOX_*_XUID.');
     }
 
     if (psnAccounts.length > 0) {
@@ -382,7 +416,13 @@ export async function sync(importPsnAccount = importPsn, importXboxAccount = imp
         const authorization = await psnAuthorization(psn);
 
         for (const key of psnAccounts) {
-            const accountId = required(process.env['PSN_' + key.toUpperCase() + '_ACCOUNT_ID'], key + ' PSN account ID');
+            const supplied = process.env['PSN_' + key.toUpperCase() + '_ACCOUNT_ID'];
+            const accountId = supplied
+                ? required(supplied, key + ' PSN account ID')
+                : await resolvePsnOnlineId(
+                    psn, authorization,
+                    required(process.env['PSN_' + key.toUpperCase() + '_ONLINE_ID'], key + ' PSN Online ID'),
+                );
             const previous = Array.isArray(current[key]?.playstation) ? current[key].playstation : [];
             const games = await importPsnAccount(psn, authorization, accountId, previous);
             next[key] ??= {};
@@ -395,7 +435,13 @@ export async function sync(importPsnAccount = importPsn, importXboxAccount = imp
         const apiKey = required(process.env.OPENXBL_API_KEY, 'OPENXBL_API_KEY');
 
         for (const key of xboxAccounts) {
-            const xuid = required(process.env['XBOX_' + key.toUpperCase() + '_XUID'], key + ' Xbox XUID');
+            const supplied = process.env['XBOX_' + key.toUpperCase() + '_XUID'];
+            const xuid = supplied
+                ? required(supplied, key + ' Xbox XUID')
+                : await resolveXboxGamertag(
+                    required(process.env['XBOX_' + key.toUpperCase() + '_GAMERTAG'], key + ' Xbox gamertag'),
+                    apiKey,
+                );
 
             if (!/^\d{10,20}$/.test(xuid)) {
                 throw new Error('Invalid Xbox XUID for ' + key + '.');
