@@ -2,3 +2,5 @@
 /var/cache/*
 !/var/cache/.gitkeep
 /vendor/
+
+/var/import/*
