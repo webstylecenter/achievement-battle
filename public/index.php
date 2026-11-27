@@ -24,9 +24,17 @@
             </div>
             <div class="hero-backdrop"></div>
             <div class="hero-content">
-                <p class="eyebrow">Steam Achievement Battle</p>
+                <p class="eyebrow">Achievement Battle</p>
                 <h1 id="battle-title">Peter vs Florian</h1>
                 <p class="hero-intro">One scoreboard. Every counted achievement. No mercy.</p>
+                <fieldset class="platform-filter" id="platform-filter">
+                    <legend>Platform</legend>
+                    <label><input type="radio" name="platform" value="all" checked><span>All platforms</span></label>
+                    <label><input type="radio" name="platform" value="pc"><span>PC</span></label>
+                    <label><input type="radio" name="platform" value="xbox"><span>Xbox</span></label>
+                    <label><input type="radio" name="platform" value="playstation"><span>PlayStation</span></label>
+                </fieldset>
+                <p class="platform-status" id="platform-status" role="status"></p>
                 <p class="competition-note" id="competition-note"></p>
 
                 <div class="battle-grid" id="battle-grid" aria-live="polite">
