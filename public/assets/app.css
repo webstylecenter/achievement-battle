@@ -891,3 +891,95 @@ h1 {
     line-height: 1.55;
     text-align: center;
 }
+
+/* Platform selection and source identification */
+.platform-filter {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 1.1rem auto 0.35rem;
+    padding: 0;
+    border: 0;
+}
+
+.platform-filter legend {
+    width: 100%;
+    margin-bottom: 0.35rem;
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-align: center;
+    text-transform: uppercase;
+}
+
+.platform-filter label {
+    position: relative;
+    cursor: pointer;
+}
+
+.platform-filter input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+
+.platform-filter span {
+    display: block;
+    padding: 0.5rem 0.85rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    background: rgba(15, 27, 44, 0.75);
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 750;
+}
+
+.platform-filter input:checked + span {
+    border-color: var(--gold);
+    background: rgba(255, 209, 102, 0.14);
+    color: #fff;
+}
+
+.platform-filter input:focus-visible + span {
+    outline: 2px solid var(--gold);
+    outline-offset: 3px;
+}
+
+.platform-status {
+    min-height: 1.2em;
+    margin: 0 auto 0.4rem;
+    color: var(--muted);
+    font-size: 0.72rem;
+    text-align: center;
+}
+
+.source-badge {
+    display: inline-flex;
+    width: 1.7rem;
+    height: 1.45rem;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    margin-right: 0.3rem;
+    border: 1px solid currentColor;
+    border-radius: 5px;
+    font-size: 0.65rem;
+    font-weight: 900;
+    line-height: 1;
+    vertical-align: middle;
+}
+
+.source-badge-pc {
+    color: #80d5ff;
+}
+
+.source-badge-xbox {
+    color: #90e7a3;
+}
+
+.source-badge-playstation {
+    color: #b7bbff;
+}
