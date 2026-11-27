@@ -111,7 +111,11 @@ async function psnPages(getPage) {
         items.push(...response.trophies);
         const total = response.totalItemCount;
 
-        if (response.trophies.length === 0 || !Number.isInteger(total) || items.length >= total) {
+        if (!Number.isInteger(total)) {
+            throw new Error('PSN omitted trophy pagination metadata.');
+        }
+
+        if (response.trophies.length === 0 || items.length >= total) {
             if (Number.isInteger(total) && items.length < total) {
                 throw new Error('PSN returned an incomplete trophy list.');
             }
@@ -124,7 +128,7 @@ async function psnPages(getPage) {
     }
 }
 
-export function psnGame(title, trophies, earned) {
+export function psnGame(title, trophies, earned, accountId = '') {
     if (!title || typeof title.npCommunicationId !== 'string') {
         throw new Error('PSN title has no communication ID.');
     }
@@ -164,6 +168,7 @@ export function psnGame(title, trophies, earned) {
         image: title.trophyTitleIconUrl ?? '',
         total: trophies.length,
         source_updated_at: title.lastUpdatedDateTime ?? null,
+        source_account_id: accountId,
         achievements,
     };
 }
@@ -202,6 +207,7 @@ async function importPsn(psn, authorization, accountId, previous) {
 
         if (
             old
+            && old.source_account_id === accountId
             && old.source_updated_at
             && old.source_updated_at === title.lastUpdatedDateTime
             && Array.isArray(old.achievements)
@@ -221,7 +227,7 @@ async function importPsn(psn, authorization, accountId, previous) {
             authorization, accountId, trophyId, 'all', { ...options, limit: 100, offset },
         ));
 
-        games.push(psnGame(title, trophies, earned));
+        games.push(psnGame(title, trophies, earned, accountId));
         console.log('PSN ' + accountId + ': ' + (index + 1) + '/' + titles.length + ' titles');
         await pause();
     }
@@ -243,7 +249,9 @@ async function xblRequest(url, apiKey, request = fetch) {
                 throw new Error('OpenXBL returned upstream status ' + json.code);
             }
 
-            return json.content ?? json;
+            const content = json.content ?? json;
+
+            return typeof content === 'string' ? JSON.parse(content) : content;
         }
 
         if (response.status !== 429 && response.status < 500) {
@@ -276,10 +284,17 @@ export function xboxGames(records) {
         const id = String(title.id);
 
         if (!games.has(id)) {
-            games.set(id, { id, name: title.name || id, total: 0, achievements: [] });
+            games.set(id, { id, name: title.name || id, total: 0, achievements: [], seen: new Set() });
         }
 
         const game = games.get(id);
+        const achievementId = String(achievement.id);
+
+        if (game.seen.has(achievementId)) {
+            continue;
+        }
+
+        game.seen.add(achievementId);
         game.total++;
 
         if (!unlocked) {
@@ -305,7 +320,7 @@ export function xboxGames(records) {
         game.achievements.push(row);
     }
 
-    return [...games.values()];
+    return [...games.values()].map(({ seen, ...game }) => game);
 }
 
 async function importXbox(xuid, apiKey, request = fetch) {
@@ -399,7 +414,15 @@ export async function sync(importPsnAccount = importPsn, importXboxAccount = imp
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
     sync().catch((error) => {
-        console.error('Console sync failed; previous import retained: ' + error.message);
+        const secrets = [process.env.PSN_NPSSO, process.env.OPENXBL_API_KEY]
+            .filter((secret) => typeof secret === 'string' && secret.length > 0);
+        let message = error instanceof Error ? error.message : String(error);
+
+        for (const secret of secrets) {
+            message = message.replaceAll(secret, '[REDACTED]');
+        }
+
+        console.error('Console sync failed; previous import retained: ' + message);
         process.exitCode = 1;
     });
 }
