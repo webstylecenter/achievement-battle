@@ -202,15 +202,15 @@ Both are unofficial integrations and may change or require access to the relevan
 
 Install Node.js **20 or newer**, then from the repository root:
 
-\`\`\`bash
+```bash
 npm install --prefix tools/console-importer
 mkdir -p var/import
 chmod 700 var/import
-\`\`\`
+```
 
-Add the relevant values from \`.env.example\` to your private \`.env\` file:
+Add the relevant values from `.env.example` to your private `.env` file:
 
-\`\`\`dotenv
+```dotenv
 # Use a signed-in PSN account whose trophy permissions allow viewing both players.
 PSN_NPSSO=
 PSN_PETER_ACCOUNT_ID=
@@ -220,40 +220,40 @@ PSN_FLORIAN_ACCOUNT_ID=
 OPENXBL_API_KEY=
 XBOX_PETER_XUID=
 XBOX_FLORIAN_XUID=
-\`\`\`
+```
 
 For PlayStation:
 1. Sign in to your **own** PlayStation account at [playstation.com](https://www.playstation.com/).
-2. In that same browser, open [Sony's NPSSO cookie endpoint](https://ca.account.sony.com/api/v1/ssocookie) and put the returned **NPSSO** in \`.env\`. **This is password-equivalent: never commit it, post it in issues, share it in chat or expose it in the browser.**
-3. Set \`PSN_PETER_ACCOUNT_ID\` and \`PSN_FLORIAN_ACCOUNT_ID\` to the **numeric account IDs**, not Online IDs. You can use \`me\` for whichever player is the authenticated account. For another account, the \`psn-api\` \`makeUniversalSearch\` function can resolve an Online ID to an account ID if your authorization can see it. Private trophy lists require that player's authorization or a privacy-setting change.
-4. The importer exchanges NPSSO for an access/refresh token and saves the **refresh token** privately in \`var/import/psn-tokens.json\` (mode 0600). After a successful first import, you can remove \`PSN_NPSSO\` from \`.env\`. When the refresh token expires, repeat authentication with your own NPSSO.
+2. In that same browser, open [Sony's NPSSO cookie endpoint](https://ca.account.sony.com/api/v1/ssocookie) and put the returned **NPSSO** in `.env`. **This is password-equivalent: never commit it, post it in issues, share it in chat or expose it in the browser.**
+3. Set `PSN_PETER_ACCOUNT_ID` and `PSN_FLORIAN_ACCOUNT_ID` to the **numeric account IDs**, not Online IDs. You can use `me` for whichever player is the authenticated account. For another account, the `psn-api` `makeUniversalSearch` function can resolve an Online ID to an account ID if your authorization can see it. Private trophy lists require that player's authorization or a privacy-setting change.
+4. The importer exchanges NPSSO for an access/refresh token and saves the **refresh token** privately in `var/import/psn-tokens.json` (mode 0600). After a successful first import, you can remove `PSN_NPSSO` from `.env`. When the refresh token expires, repeat authentication with your own NPSSO.
 
 For Xbox:
-1. Sign in to [OpenXBL](https://xbl.io/), obtain your own API key and store it as \`OPENXBL_API_KEY\` in \`.env\`.
-2. Find each player's numeric **XUID** (not gamertag) through OpenXBL's user search endpoint and set \`XBOX_PETER_XUID\` and \`XBOX_FLORIAN_XUID\`.
+1. Sign in to [OpenXBL](https://xbl.io/), obtain your own API key and store it as `OPENXBL_API_KEY` in `.env`.
+2. Find each player's numeric **XUID** (not gamertag) through OpenXBL's user search endpoint and set `XBOX_PETER_XUID` and `XBOX_FLORIAN_XUID`.
 3. Ensure OpenXBL can access their achievements. Check rate limits and data-sharing/privacy settings.
 
 Only configure the accounts/platforms you want to import. **Empty fields are skipped** and any existing other-platform import is preserved.
 
-Run manually from the project root (requires Node.js 20.6+ for \`--env-file\`):
+Run manually from the project root (requires Node.js 20.6+ for `--env-file`):
 
-\`\`\`bash
+```bash
 node --env-file=.env tools/console-importer/sync.mjs
-\`\`\`
+```
 
-The importer fetches all PSN titles and trophy groups and follows OpenXBL v3 achievement pagination. For unchanged PSN titles it reuses earlier trophy details to avoid needless API calls. It saves results to \`var/import/console-achievements.json\` outside the public directory.
+The importer fetches all PSN titles and trophy groups and follows OpenXBL v3 achievement pagination. For unchanged PSN titles it reuses earlier trophy details to avoid needless API calls. It saves results to `var/import/console-achievements.json` outside the public directory.
 
-- **Atomic update:** if an API call fails, the existing \`console-achievements.json\` remains intact. No partial score is published.
-- **No credential leak:** neither the web API nor its response exposes tokens. The refresh token and import JSON are in gitignored \`var/import\` with private file permissions.
+- **Atomic update:** if an API call fails, the existing `console-achievements.json` remains intact. No partial score is published.
+- **No credential leak:** neither the web API nor its response exposes tokens. The refresh token and import JSON are in gitignored `var/import` with private file permissions.
 - **Old Xbox achievements:** achievements with no reliable unlock timestamp still count toward all-time totals. They are excluded from date-limited and monthly totals because their unlock month cannot be determined.
 - **Caching:** games that disappear from the API because of visibility changes may not appear in newly imported data; review account privacy settings if totals drop.
 - **No imported data:** the website continues showing Steam achievements and marks missing console sources instead of treating them as confirmed zeroes.
 
 ### Scheduled console import on Ubuntu
 
-The repository includes a separate systemd service and timer. Adjust the username/path/Node executable in \`deploy/achievement-console-import.service\` if they differ on your server:
+The repository includes a separate systemd service and timer. Adjust the username/path/Node executable in `deploy/achievement-console-import.service` if they differ on your server:
 
-\`\`\`bash
+```bash
 command -v node
 sudo cp deploy/achievement-console-import.service /etc/systemd/system/
 sudo cp deploy/achievement-console-import.timer /etc/systemd/system/
@@ -261,19 +261,19 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now achievement-console-import.timer
 sudo systemctl start achievement-console-import.service
 sudo journalctl -u achievement-console-import.service -n 80 --no-pager
-\`\`\`
+```
 
-The console timer runs twice daily. The existing Steam timer stays unchanged. The importer is read independently by \`/api.php\` on each page request, so a separate PHP refresh is unnecessary.
+The console timer runs twice daily. The existing Steam timer stays unchanged. The importer is read independently by `/api.php` on each page request, so a separate PHP refresh is unnecessary.
 
 ### Tests
 
-\`\`\`bash
+```bash
 node --test tools/console-importer/sync.test.mjs
 php tests/ConsoleAchievementServiceSmokeTest.php
 composer analyse
 composer phpcs
-\`\`\`
+```
 
-For manual imports, the same schema remains supported; see \`examples/console-achievements.example.json\`. Every game has an \`id\`, \`name\`, optional HTTPS \`image\`, optional \`total\`, and an \`achievements\` array. Every unlocked achievement must have a unique ID per game. A timezone-aware ISO 8601 \`unlocked_at\` is used for monthly and date-scoped totals; it is optional for historical achievements where the provider does not supply the actual unlock time. Optional \`rarity_percentage\` (0–100) enables rare achievement entries.
+For manual imports, the same schema remains supported; see `examples/console-achievements.example.json`. Every game has an `id`, `name`, optional HTTPS `image`, optional `total`, and an `achievements` array. Every unlocked achievement must have a unique ID per game. A timezone-aware ISO 8601 `unlocked_at` is used for monthly and date-scoped totals; it is optional for historical achievements where the provider does not supply the actual unlock time. Optional `rarity_percentage` (0–100) enables rare achievement entries.
 
 **Limitations:** PSN and OpenXBL are not officially supported by Sony/Microsoft as a general public achievement API. Initial trophy import may require substantial API calls. Never use another player's authentication tokens without their consent.
