@@ -244,9 +244,7 @@ final class ConsoleAchievementService
                 if (
                     !is_string($achievementId)
                     || $achievementId === ''
-                    || $unlockedAt === null
-                    || $unlockedAt <= 0
-                    || $unlockedAt > $now
+                    || ($unlockedAt !== null && ($unlockedAt <= 0 || $unlockedAt > $now))
                 ) {
                     continue;
                 }
@@ -259,19 +257,27 @@ final class ConsoleAchievementService
 
                 $seen[$identity] = true;
                 $unlocked++;
-                $lastUnlocked = max($lastUnlocked, $unlockedAt);
                 $score['lifetime_achievement_count']++;
-                $countsForBattle = $start === null || $unlockedAt >= $start;
+                $countsForBattle = $start === null || ($unlockedAt !== null && $unlockedAt >= $start);
                 $battleUnlocked += $countsForBattle ? 1 : 0;
                 $score['achievement_count'] += $countsForBattle ? 1 : 0;
 
-                if ($monthStart !== null && $monthEnd !== null && $unlockedAt >= $monthStart && $unlockedAt < $monthEnd) {
-                    $score['monthly_achievement_count']++;
-                }
+                if ($unlockedAt !== null) {
+                    $lastUnlocked = max($lastUnlocked, $unlockedAt);
 
-                $date = (new DateTimeImmutable('@' . $unlockedAt))->setTimezone($timezone);
-                $bucket = $date->modify('first day of this month')->setTime(0, 0, 0)->getTimestamp();
-                $score['month_buckets'][$bucket] = ($score['month_buckets'][$bucket] ?? 0) + 1;
+                    if (
+                        $monthStart !== null
+                        && $monthEnd !== null
+                        && $unlockedAt >= $monthStart
+                        && $unlockedAt < $monthEnd
+                    ) {
+                        $score['monthly_achievement_count']++;
+                    }
+
+                    $date = (new DateTimeImmutable('@' . $unlockedAt))->setTimezone($timezone);
+                    $bucket = $date->modify('first day of this month')->setTime(0, 0, 0)->getTimestamp();
+                    $score['month_buckets'][$bucket] = ($score['month_buckets'][$bucket] ?? 0) + 1;
+                }
                 $rarity = $achievement['rarity_percentage'] ?? null;
 
                 if ((is_int($rarity) || is_float($rarity)) && $rarity >= 0 && $rarity <= 100) {
@@ -280,7 +286,7 @@ final class ConsoleAchievementService
                         'game_image' => $image,
                         'name' => is_string($achievement['name'] ?? null) ? $achievement['name'] : $achievementId,
                         'percentage' => (float) $rarity,
-                        'unlock_time' => $unlockedAt,
+                        'unlock_time' => $unlockedAt ?? 0,
                         'platform' => $platform,
                     ];
                 }
