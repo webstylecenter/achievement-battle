@@ -200,12 +200,13 @@ Both are unofficial integrations and may change or require access to the relevan
 
 ### Initial setup
 
-Install Node.js **20 or newer**, then from the repository root:
+Install Node.js **20.6 or newer**, then from the repository root:
 
 ```bash
 npm install --prefix tools/console-importer
 mkdir -p var/import
 chmod 700 var/import
+chmod 600 .env
 ```
 
 Add the relevant values from `.env.example` to your private `.env` file:
