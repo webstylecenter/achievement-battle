@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { psnGame, xboxGames } from './sync.mjs';
+import { psnGame, xboxGames, resolvePsnOnlineId, resolveXboxGamertag } from './sync.mjs';
 
 test('PlayStation converts earned trophies with IDs, dates and rarity', () => {
     const title = {
@@ -72,4 +72,33 @@ test('Xbox preserves older unlocks without a timestamp for lifetime counts', () 
     ]);
 
     assert.deepEqual(games[0].achievements, [{ id: '56', name: 'Undated achievement' }]);
+});
+
+test('PlayStation Online ID lookup requires an exact match', async () => {
+    const psn = {
+        makeUniversalSearch: async () => ({
+            domainResponses: [{ results: [
+                { socialMetadata: { onlineId: 'Player-123', accountId: '7654321' } },
+                { socialMetadata: { onlineId: 'Player-123-Clone', accountId: '9999999' } },
+            ] }],
+        }),
+    };
+
+    assert.equal(await resolvePsnOnlineId(psn, {}, 'player-123'), '7654321');
+    await assert.rejects(() => resolvePsnOnlineId(psn, {}, 'unknown'), /Cannot resolve PSN/);
+});
+
+test('Xbox gamertag lookup rejects fuzzy matches', async () => {
+    const request = async () => ({
+        ok: true,
+        json: async () => ({ code: 200, content: {
+            people: [
+                { gamertag: 'PlayerABC', xuid: '2533274792093122' },
+                { gamertag: 'Player', xuid: '2533274792093123' },
+            ],
+        } }),
+    });
+
+    assert.equal(await resolveXboxGamertag('player', 'test-key', request), '2533274792093123');
+    await assert.rejects(() => resolveXboxGamertag('NoMatch', 'test-key', request), /exact XUID/);
 });
