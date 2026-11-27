@@ -6,7 +6,7 @@ A one-page PHP dashboard that compares the Steam achievements of Peter van Dam a
 
 - Full-screen battle reveal with animated counters and progress bars.
 - Tekken-style intro: both fighter portraits slide in from the sides and collide with an impact/shake effect.
-- 4.2-second accelerating score reveal and winner confetti.
+- 2-second accelerating score reveal and winner confetti.
 - A battle score that can start at a configured date or at a player's Steam account creation date.
 - Lifetime achievement totals after exclusions for comparison/debugging.
 - Perfect-game counts derived from the achievement data returned by Steam.
@@ -194,7 +194,7 @@ The dashboard combines Steam (PC), Xbox and PlayStation achievements and can fil
 
 Console data is **imported, not automatically fetched**. Sony has no publicly supported trophy API for this use case; third-party Xbox integrations need a separate account and key.
 
-1. Copy `examples/console-achievements.example.json` to `var/import/console-achievements.json`.
+1. Create the private directory with `mkdir -p var/import` and copy `examples/console-achievements.example.json` to `var/import/console-achievements.json`.
 2. Replace the sample entries with actual unlocked trophy/achievement data for both `peter` and `florian`.
 3. Refresh the browser. The API reads the import on each request; no additional Steam requests or systemd timer changes.
 4. Keep this file private: `var/import` is gitignored and outside `public`.
