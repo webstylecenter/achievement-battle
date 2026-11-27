@@ -1,0 +1,15 @@
+[Unit]
+Description=Import PSN and Xbox achievements for Achievement Battle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=peter
+WorkingDirectory=/home/peter/domains/achievement
+EnvironmentFile=/home/peter/domains/achievement/.env
+ExecStart=/usr/bin/node /home/peter/domains/achievement/tools/console-importer/sync.mjs
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+TimeoutStartSec=0
