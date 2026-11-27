@@ -39,10 +39,11 @@ PHP,
                 [
                     'id' => 'same-game',
                     'name' => 'A game',
-                    'total' => 2,
+                    'total' => 3,
                     'achievements' => [
                         ['id' => 'same-achievement', 'unlocked_at' => $now, 'rarity_percentage' => 3.2],
                         ['id' => 'other-achievement', 'unlocked_at' => $prior],
+                        ['id' => 'undated-achievement'],
                     ],
                 ],
             ],
@@ -113,7 +114,7 @@ PHP,
 
     if (
         $peter['pc']['achievement_count'] !== 10
-        || $peter['xbox']['achievement_count'] !== 2
+        || $peter['xbox']['achievement_count'] !== 3
         || $peter['playstation']['achievement_count'] !== 1
         || $peter['xbox']['monthly_achievement_count'] !== 1
         || $peter['playstation']['monthly_achievement_count'] !== 1
