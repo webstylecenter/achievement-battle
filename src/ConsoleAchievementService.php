@@ -114,7 +114,7 @@ final class ConsoleAchievementService
     }
 
     /**
-     * @return array<string, mixed>
+     * @return array<mixed>
      */
     private function loadImport(): array
     {
@@ -185,6 +185,7 @@ final class ConsoleAchievementService
             'recent_games' => [],
         ];
         $seen = [];
+        $seenGames = [];
         $now = time();
         $timezone = new DateTimeZone('Europe/Amsterdam');
 
@@ -195,10 +196,11 @@ final class ConsoleAchievementService
 
             $gameId = $game['id'] ?? null;
 
-            if (!is_string($gameId) || $gameId === '') {
+            if (!is_string($gameId) || $gameId === '' || isset($seenGames[$gameId])) {
                 continue;
             }
 
+            $seenGames[$gameId] = true;
             $gameName = is_string($game['name'] ?? null) ? $game['name'] : 'Unknown game';
             $image = $this->safeImage($game['image'] ?? null);
             $total = is_int($game['total'] ?? null) ? max(0, $game['total']) : 0;
