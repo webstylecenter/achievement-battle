@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use AchievementBattle\AppConfig;
+use AchievementBattle\ConsoleAchievementService;
 use AchievementBattle\BattleApplicationService;
 use AchievementBattle\MonthlyBattleService;
 
@@ -15,6 +16,7 @@ try {
     /** @var BattleApplicationService $battle */
     $battle = require $rootDirectory . '/src/bootstrap.php';
     require_once $rootDirectory . '/src/MonthlyBattleService.php';
+    require_once $rootDirectory . '/src/ConsoleAchievementService.php';
 
     $snapshot = $battle->cachedSnapshot();
 
@@ -29,6 +31,9 @@ try {
 
     $monthlyBattle = new MonthlyBattleService(new AppConfig($rootDirectory));
     $snapshot = $monthlyBattle->enrich($snapshot);
+
+    $consoleBattle = new ConsoleAchievementService(new AppConfig($rootDirectory));
+    $snapshot = $consoleBattle->enrich($snapshot);
 
     echo json_encode($snapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
 } catch (Throwable $exception) {
