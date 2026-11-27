@@ -103,7 +103,7 @@
             <div class="recent-columns" id="recent-games"></div>
         </section>
 
-        <section class="section">
+        <section class="section" id="shared-games-section">
             <div class="section-heading">
                 <p class="eyebrow">Recent shared games</p>
                 <h2>Unfinished games both players have played</h2>
