@@ -213,27 +213,29 @@ Add the relevant values from `.env.example` to your private `.env` file:
 ```dotenv
 # Use a signed-in PSN account whose trophy permissions allow viewing both players.
 PSN_NPSSO=
-PSN_PETER_ACCOUNT_ID=
-PSN_FLORIAN_ACCOUNT_ID=
+PSN_PETER_ONLINE_ID=
+PSN_FLORIAN_ONLINE_ID=
+# Or use PSN_PETER_ACCOUNT_ID / PSN_FLORIAN_ACCOUNT_ID (numeric or "me")
 
 # OpenXBL account API key and both players' numeric Xbox XUIDs.
 OPENXBL_API_KEY=
-XBOX_PETER_XUID=
-XBOX_FLORIAN_XUID=
+XBOX_PETER_GAMERTAG=
+XBOX_FLORIAN_GAMERTAG=
+# Or use XBOX_PETER_XUID / XBOX_FLORIAN_XUID
 ```
 
 For PlayStation:
 1. Sign in to your **own** PlayStation account at [playstation.com](https://www.playstation.com/).
 2. In that same browser, open [Sony's NPSSO cookie endpoint](https://ca.account.sony.com/api/v1/ssocookie) and put the returned **NPSSO** in `.env`. **This is password-equivalent: never commit it, post it in issues, share it in chat or expose it in the browser.**
-3. Set `PSN_PETER_ACCOUNT_ID` and `PSN_FLORIAN_ACCOUNT_ID` to the **numeric account IDs**, not Online IDs. You can use `me` for whichever player is the authenticated account. For another account, the `psn-api` `makeUniversalSearch` function can resolve an Online ID to an account ID if your authorization can see it. Private trophy lists require that player's authorization or a privacy-setting change.
+3. Set `PSN_PETER_ONLINE_ID` and `PSN_FLORIAN_ONLINE_ID` to your PSN names. The importer resolves them through `makeUniversalSearch` using an **exact name match**. Alternatively use `PSN_*_ACCOUNT_ID` with a numeric ID, or `me` for whichever player is the authenticated account. Private trophy lists require that player's authorization or a privacy-setting change.
 4. The importer exchanges NPSSO for an access/refresh token and saves the **refresh token** privately in `var/import/psn-tokens.json` (mode 0600). After a successful first import, you can remove `PSN_NPSSO` from `.env`. When the refresh token expires, repeat authentication with your own NPSSO.
 
 For Xbox:
 1. Sign in to [OpenXBL](https://xbl.io/), obtain your own API key and store it as `OPENXBL_API_KEY` in `.env`.
-2. Find each player's numeric **XUID** (not gamertag) through OpenXBL's user search endpoint and set `XBOX_PETER_XUID` and `XBOX_FLORIAN_XUID`.
+2. Set `XBOX_PETER_GAMERTAG` and `XBOX_FLORIAN_GAMERTAG` to your Xbox names. The importer uses OpenXBL search and accepts **only an exact gamertag match**. Alternatively configure numeric `XBOX_PETER_XUID` and `XBOX_FLORIAN_XUID`.
 3. Ensure OpenXBL can access their achievements. Check rate limits and data-sharing/privacy settings.
 
-Only configure the accounts/platforms you want to import. **Empty fields are skipped** and any existing other-platform import is preserved.
+If both an ID and a name are configured for one account, the ID takes precedence. Only configure the accounts/platforms you want to import. **Empty fields are skipped** and any existing other-platform import is preserved.
 
 Run manually from the project root (requires Node.js 20.6+ for `--env-file`):
 
