@@ -272,8 +272,8 @@ function renderHero(players, competition, sync, skipAnimations = false, generati
                     <span>${completedLabel}</span>
                 </div>
                 <div class="mini-stat">
-                    <strong>${numberFormatter.format(player.hours_played)}h</strong>
-                    <span>included playtime</span>
+                    <strong>${currentPlatform === 'xbox' || currentPlatform === 'playstation' ? '—' : `${numberFormatter.format(player.hours_played)}h`}</strong>
+                    <span>${currentPlatform === 'xbox' || currentPlatform === 'playstation' ? 'playtime not imported' : 'Steam playtime'}</span>
                 </div>
             </div>
         </article>
@@ -574,7 +574,11 @@ function renderStats(players, competition) {
             ['Included playtime', left.hours_played, right.hours_played, (value) => `${numberFormatter.format(value)}h`],
         ];
 
-    statsGrid.innerHTML = metrics.map(([label, leftValue, rightValue, formatter]) => `
+    const visibleMetrics = metrics.filter(([label]) => (
+        (currentPlatform === 'pc' || currentPlatform === 'all') || label !== 'Included playtime'
+    ));
+
+    statsGrid.innerHTML = visibleMetrics.map(([label, leftValue, rightValue, formatter]) => `
         <article class="stat-card">
             <div class="stat-title">${label}</div>
             <div class="stat-comparison">
@@ -599,8 +603,10 @@ function renderRecent(players) {
                     <div class="game-card">
                         <img src="${escapeAttribute(game.image)}" data-fallback="${escapeAttribute(game.icon)}" data-final-fallback="${gameFallbackImage}" alt="" loading="lazy">
                         <div class="game-card-body">
-                            <strong>${escapeHtml(game.name)}</strong>
-                            <span>${numberFormatter.format(game.hours)} hours total</span>
+                            <strong>${sourceBadge(game.platform ?? 'pc')} ${escapeHtml(game.name)}</strong>
+                            <span>${game.hours === null
+                                ? 'Last achievement: ' + dateFormatter.format(new Date(Number(game.last_played) * 1000))
+                                : numberFormatter.format(game.hours) + ' hours total'}</span>
                         </div>
                     </div>
                 `).join('') || '<p>No recent games available.</p>'}
@@ -674,7 +680,7 @@ function renderRare(players) {
                     <div class="rare-item">
                         <img src="${escapeAttribute(achievement.game_image)}" data-final-fallback="${gameFallbackImage}" alt="" loading="lazy">
                         <div>
-                            <strong>${escapeHtml(achievement.name)}</strong>
+                            <strong>${sourceBadge(achievement.platform ?? 'pc')} ${escapeHtml(achievement.name)}</strong>
                             <span>${escapeHtml(achievement.game_name)}</span>
                         </div>
                         <div class="rarity-percent">${Number(achievement.percentage).toFixed(1)}%</div>
