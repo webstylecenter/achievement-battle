@@ -1,0 +1,38 @@
+{
+  "peter": {
+    "xbox": [
+      {
+        "id": "example-xbox-title-id",
+        "name": "Example Xbox game",
+        "total": 2,
+        "achievements": [
+          {
+            "id": "xbox-achievement-1",
+            "name": "First challenge",
+            "unlocked_at": "2026-11-18T21:40:00Z",
+            "rarity_percentage": 8.4
+          }
+        ]
+      }
+    ],
+    "playstation": [
+      {
+        "id": "NPWR_example",
+        "name": "Example PlayStation title",
+        "total": 2,
+        "achievements": [
+          {
+            "id": "trophy-1",
+            "name": "First trophy",
+            "unlocked_at": "2026-11-19T13:15:00Z",
+            "rarity_percentage": 4.6
+          }
+        ]
+      }
+    ]
+  },
+  "florian": {
+    "xbox": [],
+    "playstation": []
+  }
+}

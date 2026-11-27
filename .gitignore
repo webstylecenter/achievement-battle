@@ -2,3 +2,6 @@
 /var/cache/*
 !/var/cache/.gitkeep
 /vendor/
+
+/var/import/*
+/tools/console-importer/node_modules/

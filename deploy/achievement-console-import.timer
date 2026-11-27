@@ -1,0 +1,11 @@
+[Unit]
+Description=Sync console achievements twice daily
+
+[Timer]
+OnCalendar=*-*-* 03,15:00:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=achievement-console-import.service
+
+[Install]
+WantedBy=timers.target
