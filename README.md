@@ -187,3 +187,20 @@ Then:
 ddev composer analyse
 ddev composer phpcs
 ```
+
+## PlayStation and Xbox achievements (import-based)
+
+The dashboard combines Steam (PC), Xbox and PlayStation achievements and can filter to an individual platform. The same achievement earned on PC, Xbox and PlayStation counts three times in the combined view. PlayStation trophies count as one achievement each; Xbox Gamerscore points are not used.
+
+Console data is **imported, not automatically fetched**. Sony has no publicly supported trophy API for this use case; third-party Xbox integrations need a separate account and key.
+
+1. Copy `examples/console-achievements.example.json` to `var/import/console-achievements.json`.
+2. Replace the sample entries with actual unlocked trophy/achievement data for both `peter` and `florian`.
+3. Refresh the browser. The API reads the import on each request; no additional Steam requests or systemd timer changes.
+4. Keep this file private: `var/import` is gitignored and outside `public`.
+
+Schema: `player_key -> platform -> games[]`. Platform is `xbox` or `playstation`. Each game has a unique `id`, `name`, optional HTTPS `image`, optional integer `total`, and an `achievements` array. Each unlocked achievement requires an `id` unique per game and a timezone-aware ISO 8601 `unlocked_at`; optional `rarity_percentage` (0–100) enables rare achievement entries. Game/achievement IDs may repeat on different platforms and will count independently. Duplicates within one platform are counted once. Unlock times power all-time, configured battle-start, current-month and past-month scores in Europe/Amsterdam.
+
+Without a console import the corresponding platform is marked **not imported** instead of reporting a false zero. Invalid or missing unlock timestamps are skipped. The Steam website continues to function independently.
+
+Potential future authorized export integrations: [psn-api](https://github.com/achievements-app/psn-api) for PlayStation and [OpenXBL](https://xbl.io/) for Xbox. These are unofficial and require their own authorization; this PR does not handle account credentials or automated console synchronization.
