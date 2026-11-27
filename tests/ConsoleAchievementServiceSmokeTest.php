@@ -31,7 +31,7 @@ PHP,
 
     $month = new DateTimeImmutable('first day of this month 00:00:00', new DateTimeZone('Europe/Amsterdam'));
     $previous = $month->modify('-1 month');
-    $now = $month->modify('+12 hours')->format(DATE_ATOM);
+    $now = (new DateTimeImmutable('now', new DateTimeZone('Europe/Amsterdam')))->format(DATE_ATOM);
     $prior = $previous->modify('+12 hours')->format(DATE_ATOM);
     $import = [
         'peter' => [
